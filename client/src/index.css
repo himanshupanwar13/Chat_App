@@ -15,3 +15,33 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Hide scrollbar for WebKit browsers (Chrome, Safari, Edge) */
+.sidebar-scrollable {
+  scrollbar-width: none; /* For Firefox */
+  -ms-overflow-style: none;  /* For Internet Explorer and Edge */
+}
+
+.sidebar-scrollable::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+/* src/styles/globals.css or your main CSS file */
+.custom-scrollbar {
+  scrollbar-width: thin; /* For Firefox */
+  scrollbar-color: #9c27b0 #f3e8ff; /* Custom purple and light background */
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #9c27b0; /* Custom purple */
+  border-radius: 50p;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f3e8ff; /* Light background */
+}
