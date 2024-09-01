@@ -39,7 +39,7 @@ code {
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #9c27b0; /* Custom purple */
-  border-radius: 50p;
+  border-radius: 50px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
