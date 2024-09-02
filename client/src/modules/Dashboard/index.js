@@ -35,7 +35,7 @@ const Dashboard = () => {
     }
   ]
   return (
-    <div className='w-screen flex overflow-hidden m-0 p-0'>
+    <div className='w-screen flex overflow-hidden'>
 
 <div className='w-[25%] h-screen bg-purple-300'>
 <div className='flex items-center my-8 mx-14'>
