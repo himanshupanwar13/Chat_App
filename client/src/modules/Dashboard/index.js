@@ -47,7 +47,7 @@ const Dashboard = () => {
   </div>
 </div>
 <hr />
-<div className='mx-14 mt-8 overflow-y-scroll sidebar-scrollable  h-[calc(100vh-160px)]'>
+<div className='mx-14 mt-8  sidebar-scrollable  h-[calc(100vh-160px)]'>
   <div className='text-primary text-xl font-semibold'>Messages</div>
   <div>
     {contacts.map(({ name, status, img }) => (
