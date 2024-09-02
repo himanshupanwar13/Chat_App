@@ -27,10 +27,10 @@ code {
 }
 
 /* src/styles/globals.css or your main CSS file */
-.custom-scrollbar {
-  scrollbar-width: thin; /* For Firefox */
-  scrollbar-color: #9c27b0 #f3e8ff; /* Custom purple and light background */
-}
+/* .custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #9c27b0 #f3e8ff;
+} */
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 8px;
