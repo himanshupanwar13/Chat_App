@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const Conversation = require("./Conversations");
 
 const messageSchema = mongoose.Schema({
-    ConversationId: {
+    conversationId: {
         type: String
     },
     senderId: {
