@@ -1,6 +1,7 @@
 const express = require('express');
 const bcryptjs = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cors = require('cors');
 
 // Connect DB
 require('./db/conection');
@@ -16,6 +17,13 @@ const port = process.env.PORT || 8000;
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+
+// Allow requests from localhost:3000
+app.use(cors({
+  origin: 'http://localhost:3000'
+}));
+
 
 // Routes
 app.get('/', (req, res) => {
