@@ -18,13 +18,10 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-
 // Allow requests from localhost:3000
 app.use(cors({
-  origin: 'http://localhost:3000'
-}));
-
-
+    origin: 'http://localhost:3000'
+  }));
 // Routes
 app.get('/', (req, res) => {
     res.send('Welcome');
