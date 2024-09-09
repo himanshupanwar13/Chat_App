@@ -2,6 +2,7 @@ import { useState } from "react"
 import Button from "../../components/Button"
 import Input from "../../components/input"
 import { useNavigate } from 'react-router-dom'
+
 const Form = ({
   isSignInPage = false,
 }) => {
@@ -12,7 +13,8 @@ const Form = ({
     email: '',
     password: ''
   })
-  const navigate = useNavigate();
+  
+  const navigate =useNavigate();
 
   const handleSubmit = async (e) => {
     console.log('data :>> ', data);
@@ -25,16 +27,19 @@ const Form = ({
       body: JSON.stringify(data)
     })
 
-    if (res.status === 400) {
-      alert('Invalid credentials')
-    } else {
-      const resData = await res.json()
+    if (res.ok) {  // Ensure the response status is OK (200-299)
+      const resData = await res.json();
       if (resData.token) {
         localStorage.setItem('user:token', resData.token)
         localStorage.setItem('user:detail', JSON.stringify(resData.user))
-        navigate('/')
+        navigate('/');
       }
+    } else {
+      const errorData = await res.json();
+      console.error('Error: ', errorData); // Log error for further investigation
+      alert('Failed to login/register. Please check your credentials or try again later.');
     }
+
   }
 
   return (
@@ -44,7 +49,7 @@ const Form = ({
         <div className="text-xl font-light mb-14">{isSignInPage ? "Sign in now to Get Explore" : "Sign up now to Get Started"}</div>
 
         <form className="flex flex-col w-1/2 justify-center" onSubmit={(e) => handleSubmit(e)}>
-          {!isSignInPage && <Input label="Full name" name="FullName" placeholder="Enter your FullName" className="w-full mb-6" value={data.fullName} onChange={(e) => setData({ ...data, fullName: e.target.value })} />}
+          {!isSignInPage && <Input label="Full name" name="fullName" placeholder="Enter your FullName" className="w-full mb-6" value={data.fullName} onChange={(e) => setData({ ...data, fullName: e.target.value })} />}
           <Input label="Email address" name="email" placeholder="Enter your email" type="email" className="w-full mb-6" value={data.email} onChange={(e) => setData({ ...data, email: e.target.value })} />
           <Input label="Password" name="password" placeholder="Please enter password" type="Password" className="w-full mb-10" value={data.password} onChange={(e) => setData({ ...data, password: e.target.value })} />
           <Button type="submit" label={isSignInPage ? "Log in" : "Sign Up"} className="w-full mb-2" /></form>

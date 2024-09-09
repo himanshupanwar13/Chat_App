@@ -87,9 +87,9 @@ app.post('/api/login', async (req, res) => {
             }
 
             await Users.updateOne({ _id: user._id }, { $set: { token } });
-
-            console.log(user.token, 'token')
-            res.status(200).json({ user: { email: user.email, fullName: user.fullName }, token: user.token })
+            user.save();
+            return res.status(200).json({ user: {id: user._id, email: user.email, fullName: user.fullName }, token: token })
+       
         });
 
     } catch (error) {
@@ -110,14 +110,14 @@ app.post('/api/conversation', async (req, res) => {
     }
 });
 
-app.get('/api/conversation/:userId', async (req, res) => {
+app.get('/api/conversations/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
         const conversations = await Conversations.find({ members: { $in: [userId] } }); // Fetch messages by conversationId
         const conversationUserData = Promise.all(conversations.map(async (conversation) => {
             const receiverId = conversation.members.find((member) => member !== userId);
             const user = await Users.findById(receiverId);
-            return { user: { email: user.email, fullName: user.fullName }, conversationId: conversation._id }
+            return { user: { receiverId: user._id, email: user.email, fullName: user.fullName }, conversationId: conversation._id }
         }))
         res.status(200).json(await conversationUserData);
     } catch (error) {
@@ -155,7 +155,7 @@ app.get('/api/message/:conversationId', async (req, res) => {
         const messageUserData = await Promise.all(messages.map(async (message) => {
             const user = await Users.findById(message.senderId);
             return {
-                user: { email: user.email, fullName: user.fullName },
+                user: { id: user._id, email: user.email, fullName: user.fullName },
                 message: message.message
             }
         }));
