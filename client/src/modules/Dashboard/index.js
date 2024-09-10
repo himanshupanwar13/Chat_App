@@ -194,37 +194,44 @@ const Dashboard = () => {
       </div>
 
       <div className='w-[25%] h-screen bg-purple-300 px-8 py-16'>
-        <div className='text-primary text-xl font-semibold'>Peoples</div>
-        <div className='mt-8 overflow-y-scroll sidebar-scrollable h-[calc(100vh-160px)]'>
-          {users.length > 0 ? (
-            users.map(({ userId, user }) => (
-              <div
-                key={userId}
-                className='flex items-center py-8 border-b border-b-purple-700'
-              >
-                <div
-                  className='cursor-pointer flex items-center'
-                  onClick={() => fetchMessages('new', user)}
-                >
-                  <div>
-                    <img
-                      alt="logo"
-                      src={img1}
-                      className='w-[60px] h-[60px] rounded-full p-[2px] border border-primary'
-                    />
-                  </div>
-                  <div className='ml-6'>
-                    <h3 className='text-lg font-semibold'>{user?.fullName}</h3>
-                    <p className='text-sm font-light text-gray-600'>{user?.email}</p>
-                  </div>
-                </div>
+  <div className='text-primary text-xl font-semibold'>Peoples</div>
+  <div className='mt-8 overflow-y-scroll sidebar-scrollable h-[calc(100vh-160px)]'>
+    {users.length > 0 ? (
+      // Filter out users who are part of your conversations
+      users
+        .filter(({ user }) =>
+          // Check if this user is part of any conversation
+          !conversations.some(conversation => conversation.user?.receiverId === user?.receiverId)
+        )
+        .map(({ userId, user }) => (
+          <div
+            key={userId}
+            className='flex items-center py-8 border-b border-b-purple-700'
+          >
+            <div
+              className='cursor-pointer flex items-center'
+              onClick={() => fetchMessages('new', user)}
+            >
+              <div>
+                <img
+                  alt="logo"
+                  src={img1}
+                  className='w-[60px] h-[60px] rounded-full p-[2px] border border-primary'
+                />
               </div>
-            ))
-          ) : (
-            <div className='text-center text-lg font-semibold mt-24'>No Peoples</div>
-          )}
-        </div>
-      </div>
+              <div className='ml-6'>
+                <h3 className='text-lg font-semibold'>{user?.fullName}</h3>
+                <p className='text-sm font-light text-gray-600'>{user?.email}</p>
+              </div>
+            </div>
+          </div>
+        ))
+    ) : (
+      <div className='text-center text-lg font-semibold mt-24'>No Peoples</div>
+    )}
+  </div>
+</div>
+
     </div>
   );
 };
