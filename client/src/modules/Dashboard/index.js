@@ -1,8 +1,9 @@
 import Avatar from '../../assets/avatar.svg';
 import img1 from '../../assets/img1.jpeg';
 import Input from "../../components/input";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client'
+
 
 const Dashboard = () => {
   const [user, setUser] = useState(JSON.parse(localStorage.getItem('user:detail')));
@@ -10,34 +11,41 @@ const Dashboard = () => {
   const [messages, setMessages] = useState({ messages: [], receiver: null });
   const [message, setMessage] = useState('');
   const [users, setUsers] = useState([]);
-  const [socket, setSocket] = useState(null)
+  const [socket, setSocket] = useState(null);
+  const messageRef = useRef(null)
 
 console.log('messages: ',messages)
 
-  useEffect(() => {
-    setSocket(io('http://localhost:8080'))
-  }, [])
+useEffect(() => {
+  setSocket(io('http://localhost:8080'))
+}, []);
 
-  useEffect(() => {
-    socket?.emit('addUser', user?.id);
-    socket?.on('getUsers', users => {
-      console.log("Active Users: ", users);
-    })
-    socket?.on('getMessage', data => {
-      console.log('data: ', data);
-      setMessages(prev => ({
+
+useEffect(() => {
+  if (!socket) return;
+
+  socket.on('getMessage', (data) => {
+    console.log('New message received: ', data); // Ensure this is logged on the receiver's end
+    if (data.user.id !== user?.id) {
+      setMessages((prev) => ({
         ...prev,
-        messages: [...prev.messages, { user: data.user, message: data.message}]
-      }))
+        messages: [...prev.messages, { user: data.user, message: data.message }],
+      }));
+    }
+  });
 
-    })
-  }, [socket])
+  return () => {
+    socket.off('getMessage');
+  };
+}, [socket]);
+
+
 
   useEffect(() => {
     const fetchConversations = async () => {
       try {
-        const isLoggedInUser = JSON.parse(localStorage.getItem('user:detail'));
-        const res = await fetch(`http://localhost:8000/api/conversations/${isLoggedInUser?.id}`, {
+        const loggedInUser = JSON.parse(localStorage.getItem('user:detail'));
+        const res = await fetch(`http://localhost:8000/api/conversations/${loggedInUser?.id}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -52,6 +60,10 @@ console.log('messages: ',messages)
     };
     fetchConversations();
   }, []);
+
+  useEffect(() => {
+    messageRef?.current?.scrollIntoView({ behavior: 'smooth'})
+  }, [messages?.messages])
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -89,13 +101,28 @@ console.log('messages: ',messages)
   };
 
   const sendMessage = async (e) => {
+    e.preventDefault();
+  
+    if (!message) return;
+  
+    const newMessage = { user: { id: user?.id }, message };
+  
     try {
+      // Optimistically add the message to the state
+      setMessages((prev) => ({
+        ...prev,
+        messages: [...prev.messages, newMessage],
+      }));
+  
+      // Emit the message to the server
       socket?.emit('sendMessage', {
         senderId: user?.id,
         receiverId: messages?.receiver?.receiverId,
         message,
         conversationId: messages?.conversationId
-      })
+      });
+  
+      // Send the message via the API
       const res = await fetch(`http://localhost:8000/api/message`, {
         method: 'POST',
         headers: {
@@ -108,12 +135,15 @@ console.log('messages: ',messages)
           receiverId: messages?.receiver?.receiverId
         })
       });
+  
       if (!res.ok) throw new Error('Failed to send message');
-      setMessage('');
+      setMessage('');  // Clear input field
     } catch (error) {
       console.error(error);
+      // Optionally handle the failure by reverting the optimistic update
     }
   };
+  
 
   return (
     <div className='w-screen flex overflow-hidden'>
@@ -134,7 +164,7 @@ console.log('messages: ',messages)
             {conversations.length > 0 ? (
               conversations.map(({ conversationId, user }) => (
                 <div
-                  key={users.id}
+                  key={conversationId}
                   className='flex items-center py-8 border-b border-b-purple-700'
                 >
                   <div
@@ -183,21 +213,23 @@ console.log('messages: ',messages)
         )}
         <div className='h-[75%] w-full overflow-auto rounded-lg shadow-sm custom-scrollbar'>
           <div className='p-14'>
-            {messages?.messages?.length > 0 ? (
-              messages.messages.map(({ message, user: { id } = {} }, index) => (
-                <div
-                  key={index}
+            {
+            messages?.messages?.length > 0 ?
+              messages.messages.map(({ message, user: { id } = {} }) => {
+                return (
+                 <div ref={messageRef}><div
                   className={`max-w-[40%] rounded-b-xl p-4 mb-6 ${id === user?.id ?
                     ' bg-violet-400 rounded-tl-xl ml-auto text-white' :
                     ' bg-purple-200 rounded-tr-xl'
                   }`}
                 > 
                   {message}
-                </div>
-              ))
-            ) : (
+                </div></div>
+                
+              )
+            }) : 
               <div className='text-center text-lg font-semibold mt-40'>No Messages</div>
-            )}
+            }
           </div>
         </div>
         {messages?.receiver?.fullName && (

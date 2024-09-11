@@ -26,22 +26,6 @@ code {
   display: none; /* Safari and Chrome */
 }
 
-/* src/styles/globals.css or your main CSS file */
-/* .custom-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: #9c27b0 #f3e8ff;
-} */
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: #9c27b0; /* Custom purple */
-  border-radius: 50px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: #f3e8ff; /* Light background */
+::-webkit-scrollbar{
+  display: none;
 }

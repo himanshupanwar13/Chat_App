@@ -35,7 +35,7 @@ app.use(
 let users = [];
 io.on("connection", (socket) => {
   console.log("User Connected", socket.id);
-  socket.on("addUser", (userId) => {
+  socket.on("addUser", userId => {
     const isUserExist = users.find((user) => user.userId === userId);
     if (!isUserExist) {
       const user = { userId, socketId: socket.id };
@@ -49,7 +49,7 @@ io.on("connection", (socket) => {
     const sender = users.find(user => user.userId === senderId);
     const user = await Users.findById(senderId);
     if (receiver){
-        io.to(receiver.socketId).emit('getMessage', {
+        io.to(receiver.socketId).to(sender.socketId).emit('getMessage', {
             senderId,
             message,
             conversationId,
