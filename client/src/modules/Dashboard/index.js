@@ -25,14 +25,12 @@ useEffect(() => {
   if (!socket) return;
 
   socket.on('getMessage', (data) => {
-    console.log('New message received: ', data); // Ensure this is logged on the receiver's end
-    if (data.user.id !== user?.id) {
-      setMessages((prev) => ({
-        ...prev,
-        messages: [...prev.messages, { user: data.user, message: data.message }],
-      }));
-    }
+    setMessages(prev => ({
+      ...prev,
+      messages: [...prev.messages, { user: data.user, message: data.message }],
+    }));
   });
+  
 
   return () => {
     socket.off('getMessage');
