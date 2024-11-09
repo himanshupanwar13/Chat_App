@@ -35,9 +35,6 @@ const helmet = require("helmet");
 app.use(helmet());
 
 // CORS Configuration
-const cors = require("cors");
-
-// CORS Configuration
 app.use(
   cors({
     origin: [
