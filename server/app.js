@@ -4,7 +4,11 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const io = require("socket.io")(8080, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: [
+      "http://localhost:3000", // Allow local development
+      "https://chatterflow.vercel.app", // Allow production domain
+    ],
+    methods: ["GET", "POST"],
   },
 });
 
@@ -31,13 +35,20 @@ const helmet = require("helmet");
 app.use(helmet());
 
 // CORS Configuration
+const cors = require("cors");
+
+// CORS Configuration
 app.use(
   cors({
-    origin: [process.env.CLIENT_URL || "http://localhost:3000", "https://chatterflow.vercel.app"],
+    origin: [
+      "http://localhost:3000", // Allow local development
+      "https://chatterflow.vercel.app", // Allow production domain
+    ],
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
   })
 );
+
 
 // Socket.io Setup
 let users = [];
