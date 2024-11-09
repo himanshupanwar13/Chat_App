@@ -4,7 +4,7 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const io = require("socket.io")(8080, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: process.env.CLIENT_URL ||"http://localhost:3000",
   },
 });
 
@@ -27,7 +27,7 @@ app.use(express.urlencoded({ extended: false }));
 // Allow requests from localhost:3000
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: "chatterflow.vercel.app",
   })
 );
 
