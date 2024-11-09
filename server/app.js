@@ -9,7 +9,7 @@ const io = require("socket.io")(8080, {
 });
 
 // Connect DB
-require("./db/conection");
+require("./db/connection");
 
 // Import files
 const Users = require("./models/users");
