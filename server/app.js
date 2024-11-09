@@ -27,9 +27,13 @@ app.use(express.urlencoded({ extended: false }));
 // Allow requests from localhost:3000
 app.use(
   cors({
-    origin: "chatterflow.vercel.app",
+    origin: ["http://localhost:3000", "https://chatterflow.vercel.app"],
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
   })
 );
+
+
 
 //Socket.io
 let users = [];
