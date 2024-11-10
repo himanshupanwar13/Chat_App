@@ -38,39 +38,44 @@ app.use(
 
 
 //Socket.io
-let users = [];
+let users = []; // Array to store userId to socketId mapping
+
 io.on("connection", (socket) => {
   console.log("User Connected", socket.id);
-  socket.on("addUser", userId => {
-    const isUserExist = users.find((user) => user.userId === userId);
-    if (!isUserExist) {
-      const user = { userId, socketId: socket.id };
-      users.push(user);
-      io.emit("getUsers", users);
+
+  // Add user to the array when they connect
+  socket.on("addUser", (userId) => {
+    const userExists = users.find(user => user.userId === userId);
+    if (!userExists) {
+      users.push({ userId, socketId: socket.id });
+      io.emit("getUsers", users);  // Notify all clients of the current users
     }
   });
 
-  socket.on('sendMessage', async ({ senderId, receiverId, message, conversationId}) => {
+  // When a message is sent, notify the receiver
+  socket.on('sendMessage', async ({ senderId, receiverId, message, conversationId }) => {
     const receiver = users.find(user => user.userId === receiverId);
     const sender = users.find(user => user.userId === senderId);
-    const user = await Users.findById(senderId);
-    if (receiver){
-        io.to(receiver.socketId).to(sender.socketId).emit('getMessage', {
-            senderId,
-            message,
-            conversationId,
-            receiverId,
-            user: { id: user._id, fullName: user.fullName, email: user.email }
-          });          
+
+    if (receiver) {
+      // Emit the message to both the sender and receiver for real-time update
+      io.to(receiver.socketId).to(sender.socketId).emit('getMessage', {
+        senderId,
+        message,
+        conversationId,
+        receiverId,
+        user: { id: senderId, fullName: 'Sender Full Name', email: 'Sender Email' } // Replace with actual user data
+      });
     }
   });
 
+  // Cleanup users when they disconnect
   socket.on('disconnect', () => {
-    users = users.filter(user =>user.socketId !== socket.id);
-    io.emit('getUsers', users);
-  })
-  // io.emit('getUsers', socket.userId);
+    users = users.filter(user => user.socketId !== socket.id);
+    io.emit('getUsers', users);  // Notify all clients of the updated user list
+  });
 });
+
 
 // Routes
 app.get("/", (req, res) => {
