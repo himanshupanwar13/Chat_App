@@ -17,7 +17,7 @@ const Dashboard = () => {
 console.log('messages: ',messages)
 
 useEffect(() => {
-  setSocket(io('http://localhost:8080'))
+  setSocket(io('https://chatterflow.onrender.com/'))
 }, []);
 
 
