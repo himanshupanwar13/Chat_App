@@ -44,7 +44,7 @@ const Form = ({
 
   return (
     <div className="bg-light h-screen flex justify-center items-center">
-      <div className="bg-white w-[600px] h-[700px] shadow-lg rounded-lg flex flex-col justify-center items-center">
+      <div className="bg-purple-200 w-[600px] h-[700px] shadow-lg rounded-lg flex flex-col justify-center items-center">
         <div className="text-4xl font-bold">Welcome {isSignInPage && "Back"}</div>
         <div className="text-xl font-light mb-14">{isSignInPage ? "Sign in now to Get Explore" : "Sign up now to Get Started"}</div>
 
@@ -54,7 +54,7 @@ const Form = ({
           <Input label="Password" name="password" placeholder="Please enter password" type="Password" className="w-full mb-10" value={data.password} onChange={(e) => setData({ ...data, password: e.target.value })} />
           <Button type="submit" label={isSignInPage ? "Log in" : "Sign Up"} className="w-full mb-2" /></form>
 
-        <div>{isSignInPage ? "Didn't have an account?" : "Already have an account?"}<span className="text-primary cursor-pointer underline ml-1" onClick={() => navigate(`/users/${isSignInPage ? "sign_up" : "sign_in"}`)}>{isSignInPage ? "Sign up" : "Log in"}</span></div>
+        <div>{isSignInPage ? "Didn't have an account?" : "Already have an account?"}<span className="text-purple-700 cursor-pointer underline ml-1" onClick={() => navigate(`/users/${isSignInPage ? "sign_up" : "sign_in"}`)}>{isSignInPage ? "Sign up" : "Log in"}</span></div>
       </div></div>
 
   )

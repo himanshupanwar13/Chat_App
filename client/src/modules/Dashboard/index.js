@@ -1,5 +1,5 @@
 import Avatar from '../../assets/avatar.svg';
-import img1 from '../../assets/img1.jpeg';
+import img1 from '../../assets/img1.svg';
 import Input from "../../components/input";
 import React, { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client'
@@ -14,7 +14,6 @@ const Dashboard = () => {
   const [socket, setSocket] = useState(null);
   const messageRef = useRef(null)
 
-console.log('messages: ',messages)
 
 useEffect(() => {
   setSocket(io('https://chatterflow.onrender.com/'))
@@ -197,7 +196,7 @@ useEffect(() => {
         {messages?.receiver?.fullName && (
           <div className='w-[75%] bg-purple-300 h-[80px] my-14 rounded-full flex items-center px-14 mb-2 py-2'>
             <div className='cursor-pointer'>
-              <img alt="logo" src={Avatar} width={60} height={60} />
+              <img alt="logo" src={img1} width={60} height={60} />
             </div>
             <div className='ml-6 mr-auto'>
               <h3 className='text-lg'>{messages?.receiver?.fullName}</h3>
