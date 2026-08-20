@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require("express");
 const bcryptjs = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -5,9 +7,15 @@ const cors = require("cors");
 const app = express();
 const server = require('http').createServer(app);
 
+const allowedOrigins = [
+ "http://localhost:3000",
+ process.env.CLIENT_URL ? process.env.CLIENT_URL.replace(/\/$/, "") : "",
+].filter(Boolean);
+
 const io = require("socket.io")(server, {
   cors: {
-    origin: process.env.CLIENT_URL ||"http://localhost:3000",
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
   },
 });
 
@@ -29,7 +37,7 @@ app.use(express.urlencoded({ extended: false }));
 // Allow requests from localhost:3000
 app.use(
   cors({
-    origin: ["http://localhost:3000", "https://chatterflow.vercel.app"],
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
   })
