@@ -1393,6 +1393,16 @@ const Dashboard = () => {
                   <div className="flex flex-shrink-0 items-center gap-1">
                     <button
                       type="button"
+                      aria-label="Open people"
+                      title="Find people"
+                      onClick={() => setShowPeoplePanel(true)}
+                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-sm shadow-sm transition hover:border-violet-200 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
+                    >
+                      👥
+                    </button>
+
+                    <button
+                      type="button"
                       aria-label="Toggle theme"
                       onClick={() =>
                         setDarkMode(
@@ -1448,13 +1458,25 @@ const Dashboard = () => {
 
                 {/* Conversations Header */}
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
-                    Conversations
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
+                      Conversations
+                    </h2>
 
-                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-200">
-                    {conversationCount}
-                  </span>
+                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-200">
+                      {conversationCount}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPeoplePanel(true)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 shadow-xs transition hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-950/50 dark:text-violet-300 lg:hidden"
+                    aria-label="Find people"
+                  >
+                    <span>👥</span>
+                    <span>New Chat</span>
+                  </button>
                 </div>
 
                 {/* Conversations List */}
@@ -2261,10 +2283,19 @@ const Dashboard = () => {
                 RIGHT SIDEBAR - PEOPLE
             ================================================== */}
 
+            {/* Mobile Backdrop */}
+            {showPeoplePanel && (
+              <div
+                className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-xs transition-opacity lg:hidden"
+                onClick={() => setShowPeoplePanel(false)}
+                aria-hidden="true"
+              />
+            )}
+
             <aside
               className={`${
                 showPeoplePanel
-                  ? 'fixed inset-y-0 right-0 z-40 flex w-full max-w-sm lg:relative lg:flex'
+                  ? 'fixed inset-y-0 right-0 z-50 flex w-full max-w-sm shadow-2xl transition-transform lg:relative lg:z-auto lg:flex lg:shadow-none'
                   : 'hidden lg:flex'
               }`}
             >

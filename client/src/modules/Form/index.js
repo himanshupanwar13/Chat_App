@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button";
 import Input from "../../components/input";
 import { useNavigate } from 'react-router-dom';
-import { API_BASE_URL } from "../../config";
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://chatterflow.onrender.com';
 
 const Form = ({ isSignInPage = false }) => {
   const [data, setData] = useState({
