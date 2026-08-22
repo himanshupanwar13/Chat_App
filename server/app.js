@@ -1,308 +1,253 @@
 require('dotenv').config();
 
-const express = require("express");
-const bcryptjs = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const cors = require("cors");
+const crypto = require('crypto');
+const express = require('express');
+const bcryptjs = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const http = require('http');
+const { sendOtpEmail } = require('./services/emailService');
+const { extractBearerToken, getJwtSecret, requireAuth, verifyJwt } = require('./middleware/auth');
+const { findConversationByMembers, getOrCreateDirectConversation, getOtherMemberId, isConversationMember, toIdString } = require('./utils/chat');
+
+getJwtSecret();
 const app = express();
-const server = require('http').createServer(app);
-
-const allowedOrigins = [
- "http://localhost:3000",
- process.env.CLIENT_URL ? process.env.CLIENT_URL.replace(/\/$/, "") : "",
-].filter(Boolean);
-
-const io = require("socket.io")(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-  },
-});
-
-// Connect DB
-require("./db/connection");
-
-// Import files
-const Users = require("./models/users");
-const Conversations = require("./models/Conversations");
-const Messages = require("./models/Messages");
-const { socket } = require("socket.io");
-
+const server = http.createServer(app);
 const port = process.env.PORT || 8000;
+const allowedOrigins = ['http://localhost:3000', process.env.CLIENT_URL?.replace(/\/$/, '')].filter(Boolean);
+const io = require('socket.io')(server, { cors: { origin: allowedOrigins, methods: ['GET', 'POST'] } });
 
-// App Use
+require('./db/connection');
+const Users = require('./models/users');
+const Conversations = require('./models/Conversations');
+const Messages = require('./models/Messages');
+
+const OTP_EXPIRY_MS = 5 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const OTP_PURPOSES = new Set(['signup', 'login', 'forgot-password']);
+const onlineSocketsByUser = new Map();
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+const createJwtToken = (user) => jwt.sign({ userId: user._id, email: user.email }, getJwtSecret(), { expiresIn: 84600 });
+const createResetAuthorizationToken = (user) => jwt.sign({ userId: user._id, email: user.email, purpose: 'forgot-password-reset' }, getJwtSecret(), { expiresIn: 600 });
+const standardUserResponse = (user) => ({ id: user._id, email: user.email, fullName: user.fullName });
+const isOnline = (userId) => (onlineSocketsByUser.get(toIdString(userId))?.size || 0) > 0;
+const addOnlineSocket = (userId, socketId) => {
+  const id = toIdString(userId); const sockets = onlineSocketsByUser.get(id) || new Set();
+  sockets.add(socketId); onlineSocketsByUser.set(id, sockets);
+};
+const removeOnlineSocket = (userId, socketId) => {
+  const id = toIdString(userId); const sockets = onlineSocketsByUser.get(id);
+  if (!sockets) return; sockets.delete(socketId); if (!sockets.size) onlineSocketsByUser.delete(id);
+};
+const emitPresence = () => io.emit('getUsers', [...onlineSocketsByUser.keys()].map((userId) => ({ userId })));
+const emitToUser = (userId, event, payload) => io.to(`user:${toIdString(userId)}`).emit(event, payload);
+const clearOtpState = (user) => { user.otpHash = null; user.otpExpiry = null; user.otpAttempts = 0; user.otpRequestedAt = null; };
+
+const issueOtpForUser = async (user, purpose) => {
+  if (user.otpRequestedAt && Date.now() - new Date(user.otpRequestedAt).getTime() < OTP_RESEND_COOLDOWN_MS) return { cooldown: true };
+  const otp = String(crypto.randomInt(100000, 1000000));
+  user.otpHash = await bcryptjs.hash(otp, 10); user.otpExpiry = new Date(Date.now() + OTP_EXPIRY_MS);
+  user.otpAttempts = 0; user.otpRequestedAt = new Date(); await user.save();
+  await sendOtpEmail({ email: user.email, otp, purpose }); return { cooldown: false };
+};
+const findUserByNormalizedEmail = (email) => {
+  const normalized = normalizeEmail(email);
+  return Users.findOne({ $or: [{ emailNormalized: normalized }, { email: normalized }] });
+};
+const getVerifiedRecipient = async (receiverId, senderId) => {
+  if (!receiverId || toIdString(receiverId) === toIdString(senderId)) return null;
+  return Users.findOne({ _id: receiverId, emailVerified: true }).select('_id email fullName lastSeen updatedAt');
+};
+const requireConversationMember = async (conversationId, userId) => {
+  if (!conversationId || conversationId === 'new') return null;
+  const conversation = await Conversations.findById(conversationId);
+  return conversation && isConversationMember(conversation, userId) ? conversation : null;
+};
+const buildMessageResponse = async (message) => {
+  const sender = await Users.findById(message.senderId).select('_id email fullName');
+  return { _id: message._id, id: message._id, conversationId: message.conversationId, senderId: message.senderId,
+    message: message.isDeleted ? 'This message was deleted' : message.message, status: message.status, replyTo: message.replyTo || null,
+    reactions: message.reactions || [], isEdited: Boolean(message.isEdited), isDeleted: Boolean(message.isDeleted), createdAt: message.createdAt,
+    user: { id: sender?._id || message.senderId, email: sender?.email || '', fullName: sender?.fullName || 'User' } };
+};
+const requireSocketConversationMember = async (socket, conversationId, receiverId) => {
+  const conversation = await requireConversationMember(conversationId, socket.data.userId);
+  if (!conversation) return null;
+  const otherMemberId = getOtherMemberId(conversation, socket.data.userId);
+  if (receiverId && toIdString(receiverId) !== toIdString(otherMemberId)) return null;
+  return { conversation, otherMemberId };
+};
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.use(cors({ origin: allowedOrigins, methods: ['GET', 'POST', 'PUT', 'DELETE'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 
-// Allow requests from localhost:3000
-app.use(
-  cors({
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type"],
-  })
-);
-
-
-
-//Socket.io
-let users = []; // Array to store userId to socketId mapping
-
-io.on("connection", (socket) => {
-  console.log("User Connected", socket.id);
-
-  // Add user to the array when they connect
-  socket.on("addUser", (userId) => {
-    const userExists = users.find(user => user.userId === userId);
-    if (!userExists) {
-      users.push({ userId, socketId: socket.id });
-      io.emit("getUsers", users);  // Notify all clients of the current users
-    }
-  });
-
-  // When a message is sent, notify the receiver
-  socket.on('sendMessage', async ({ senderId, receiverId, message, conversationId }) => {
-    const receiver = users.find(user => user.userId === receiverId);
-    const sender = users.find(user => user.userId === senderId);
-
-    if (receiver) {
-      // Emit the message to both the sender and receiver for real-time update
-      io.to(receiver.socketId).to(sender.socketId).emit('getMessage', {
-        senderId,
-        message,
-        conversationId,
-        receiverId,
-        user: { id: senderId, fullName: 'Sender Full Name', email: 'Sender Email' } // Replace with actual user data
-      });
-    }
-  });
-
-  // Cleanup users when they disconnect
-  socket.on('disconnect', () => {
-    users = users.filter(user => user.socketId !== socket.id);
-    io.emit('getUsers', users);  // Notify all clients of the updated user list
-  });
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || extractBearerToken(socket.handshake.headers.authorization);
+    if (!token) return next(new Error('Authentication required.'));
+    const payload = verifyJwt(token);
+    const user = await Users.findOne({ _id: payload.userId, emailVerified: true }).select('_id');
+    if (!user) return next(new Error('Invalid authentication token.'));
+    socket.data.userId = toIdString(user._id); return next();
+  } catch (error) { return next(new Error('Invalid or expired authentication token.')); }
 });
 
-
-// Routes
-app.get("/", (req, res) => {
-  res.send("Welcome");
+io.on('connection', (socket) => {
+  const userId = socket.data.userId;
+  socket.join(`user:${userId}`); addOnlineSocket(userId, socket.id); emitPresence();
+  // Retained for client compatibility. Identity always comes from the verified socket token.
+  socket.on('addUser', () => { addOnlineSocket(userId, socket.id); emitPresence(); });
+  socket.on('sendMessage', async ({ _id, conversationId, receiverId }) => {
+    try {
+      const message = await Messages.findById(_id);
+      if (!message || toIdString(message.senderId) !== userId || toIdString(message.conversationId) !== toIdString(conversationId)) return;
+      const membership = await requireSocketConversationMember(socket, message.conversationId, receiverId); if (!membership) return;
+      if (isOnline(membership.otherMemberId) && message.status === 'sent') { message.status = 'delivered'; await message.save(); }
+      const payload = await buildMessageResponse(message); emitToUser(membership.otherMemberId, 'getMessage', payload); emitToUser(userId, 'getMessage', payload);
+    } catch { socket.emit('chatError', { event: 'sendMessage', message: 'Unable to deliver message.' }); }
+  });
+  socket.on('typing', async ({ conversationId, receiverId }) => {
+    const membership = await requireSocketConversationMember(socket, conversationId, receiverId); if (!membership) return;
+    const user = await Users.findById(userId).select('fullName');
+    emitToUser(membership.otherMemberId, 'userTyping', { senderId: userId, receiverId: membership.otherMemberId, conversationId, senderName: user?.fullName || 'Someone' });
+  });
+  socket.on('stopTyping', async ({ conversationId, receiverId }) => {
+    const membership = await requireSocketConversationMember(socket, conversationId, receiverId); if (!membership) return;
+    emitToUser(membership.otherMemberId, 'userStoppedTyping', { senderId: userId, receiverId: membership.otherMemberId, conversationId });
+  });
+  socket.on('reactMessage', async ({ messageId, conversationId, receiverId }) => {
+    const message = await Messages.findById(messageId); if (!message || toIdString(message.conversationId) !== toIdString(conversationId)) return;
+    const membership = await requireSocketConversationMember(socket, conversationId, receiverId); if (!membership) return;
+    const payload = { messageId, conversationId, reactions: message.reactions || [] }; emitToUser(membership.otherMemberId, 'messageReacted', payload); emitToUser(userId, 'messageReacted', payload);
+  });
+  socket.on('editMessage', async ({ messageId, conversationId, receiverId }) => {
+    const message = await Messages.findById(messageId);
+    if (!message || toIdString(message.senderId) !== userId || toIdString(message.conversationId) !== toIdString(conversationId)) return;
+    const membership = await requireSocketConversationMember(socket, conversationId, receiverId); if (!membership) return;
+    const payload = { messageId, conversationId, message: message.message, isEdited: true }; emitToUser(membership.otherMemberId, 'messageEdited', payload); emitToUser(userId, 'messageEdited', payload);
+  });
+  socket.on('deleteMessage', async ({ messageId, conversationId, receiverId }) => {
+    const message = await Messages.findById(messageId);
+    if (!message || toIdString(message.senderId) !== userId || toIdString(message.conversationId) !== toIdString(conversationId)) return;
+    const membership = await requireSocketConversationMember(socket, conversationId, receiverId); if (!membership) return;
+    const payload = { messageId, conversationId }; emitToUser(membership.otherMemberId, 'messageDeleted', payload); emitToUser(userId, 'messageDeleted', payload);
+  });
+  socket.on('markAsRead', async ({ conversationId, senderId }) => {
+    const membership = await requireSocketConversationMember(socket, conversationId, senderId); if (!membership) return;
+    await Messages.updateMany({ conversationId: toIdString(conversationId), senderId: { $ne: userId }, status: { $ne: 'read' } }, { $set: { status: 'read' } });
+    emitToUser(membership.otherMemberId, 'messagesRead', { conversationId, readerId: userId });
+  });
+  socket.on('disconnect', async () => { removeOnlineSocket(userId, socket.id); if (!isOnline(userId)) await Users.findByIdAndUpdate(userId, { lastSeen: new Date() }).catch(() => {}); emitPresence(); });
 });
 
-app.post("/api/register", async (req, res) => {
+app.get('/', (req, res) => res.send('Welcome'));
+app.post('/api/register', async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
-
-    if (!fullName || !email || !password) {
-      return res
-        .status(400)
-        .json({ error: "Please fill all required fields!" });
-    } else {
-      const isAlreadyExist = await Users.findOne({ email });
-      if (isAlreadyExist) {
-        return res.status(400).json({ error: "User already exists" });
-      }
-
-      const newUser = new Users({ fullName, email });
-      bcryptjs.hash(password, 10, async (err, hashedPassword) => {
-        if (err) {
-          return res.status(500).json({ error: "Error hashing password" });
-        }
-        newUser.set("password", hashedPassword);
-        await newUser.save();
-        return res
-          .status(200)
-          .json({ message: "User Registered Successfully" });
-      });
-    }
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Server error" });
-  }
+    if (!fullName || !email || !password) return res.status(400).json({ error: 'Please fill all required fields!' });
+    const normalizedEmail = normalizeEmail(email); let user = await findUserByNormalizedEmail(normalizedEmail);
+    if (user?.emailVerified) return res.status(400).json({ error: 'User already exists' });
+    const hashedPassword = await bcryptjs.hash(password, 10);
+    if (!user) user = new Users({ fullName, email: normalizedEmail, password: hashedPassword, emailVerified: false });
+    else { user.fullName = fullName; user.email = normalizedEmail; user.password = hashedPassword; user.emailVerified = false; user.emailVerifiedAt = null; }
+    user.token = null; await user.save();
+    const otpResult = await issueOtpForUser(user, 'signup');
+    if (otpResult.cooldown) return res.status(429).json({ error: 'Please wait before requesting a new code.' });
+    return res.status(200).json({ message: 'Registration successful. Verify your email with OTP.', requiresEmailVerification: true, email: normalizedEmail });
+  } catch (error) { if (error?.code === 11000) return res.status(409).json({ error: 'User already exists' }); console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-
-app.post("/api/login", async (req, res) => {
+app.post('/api/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ error: "Please fill all required fields!" });
-    }
-
-    const user = await Users.findOne({ email });
-    if (!user) {
-      return res
-        .status(400)
-        .json({ error: "User email or password is incorrect" });
-    }
-
-    const validateUser = await bcryptjs.compare(password, user.password);
-    if (!validateUser) {
-      return res
-        .status(400)
-        .json({ error: "User email or password is incorrect" });
-    }
-
-    const payload = {
-      userId: user._id,
-      email: user.email,
-    };
-    const JWT_SECRET_KEY =
-      process.env.JWT_SECRET_KEY || "THIS_IS_A_JWT_SECRET_KEY";
-
-    jwt.sign(
-      payload,
-      JWT_SECRET_KEY,
-      { expiresIn: 84600 },
-      async (err, token) => {
-        if (err) {
-          return res.status(500).json({ error: "Error generating token" });
-        }
-
-        await Users.updateOne({ _id: user._id }, { $set: { token } });
-        user.save();
-        return res.status(200).json({
-          user: { id: user._id, email: user.email, fullName: user.fullName },
-          token: token,
-        });
-      }
-    );
-  } catch (error) {
-    console.error(`Error: ${error}`);
-    return res.status(500).json({ error: "Server error" });
-  }
+    const { email, password } = req.body; if (!email || !password) return res.status(400).json({ error: 'Please fill all required fields!' });
+    const user = await findUserByNormalizedEmail(email);
+    if (!user || !(await bcryptjs.compare(password, user.password))) return res.status(400).json({ error: 'User email or password is incorrect' });
+    if (!user.emailVerified) return res.status(403).json({ error: 'Email verification required', requiresEmailVerification: true });
+    const token = createJwtToken(user); user.token = token; await user.save(); return res.status(200).json({ user: standardUserResponse(user), token });
+  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-
-app.post("/api/conversation", async (req, res) => {
+app.post('/api/auth/send-otp', async (req, res) => {
   try {
-    const { senderId, receiverId } = req.body;
-    const newConversation = new Conversations({
-      members: [senderId, receiverId],
-    });
-    await newConversation.save();
-    res.status(200).json({ message: "Conversation created successfully" });
-  } catch (error) {
-    console.error(`Error: ${error}`);
-    return res.status(500).json({ error: "Server error" });
-  }
+    const { email, purpose } = req.body || {}; const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail || !OTP_PURPOSES.has(purpose)) return res.status(400).json({ error: 'Invalid request.' });
+    const user = await findUserByNormalizedEmail(normalizedEmail);
+    if (purpose === 'signup' && (!user || user.emailVerified)) return res.status(user ? 409 : 400).json({ error: user ? 'This email is already verified.' : 'Please complete signup before requesting OTP.' });
+    if (purpose === 'login' && !user) return res.status(404).json({ error: 'Account not found.' });
+    if (purpose === 'forgot-password' && !user) return res.status(200).json({ message: 'OTP sent successfully' });
+    const otpResult = await issueOtpForUser(user, purpose); if (otpResult.cooldown) return res.status(429).json({ error: 'Please wait before requesting a new code.' });
+    return res.status(200).json({ message: 'OTP sent successfully' });
+  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-
-app.get("/api/conversations/:userId", async (req, res) => {
+app.post('/api/auth/verify-otp', async (req, res) => {
   try {
-    const userId = req.params.userId;
-    const conversations = await Conversations.find({
-      members: { $in: [userId] },
-    }); // Fetch messages by conversationId
-    const conversationUserData = Promise.all(
-      conversations.map(async (conversation) => {
-        const receiverId = conversation.members.find(
-          (member) => member !== userId
-        );
-        const user = await Users.findById(receiverId);
-        return {
-          user: {
-            receiverId: user._id,
-            email: user.email,
-            fullName: user.fullName,
-          },
-          conversationId: conversation._id,
-        };
-      })
-    );
-    res.status(200).json(await conversationUserData);
-  } catch (error) {
-    console.error(`Error: ${error}`);
-    return res.status(500).json({ error: "Server error" });
-  }
+    const { email, otp, purpose } = req.body || {};
+    if (!normalizeEmail(email) || !/^\d{6}$/.test(String(otp || '')) || !OTP_PURPOSES.has(purpose)) return res.status(400).json({ error: 'Invalid request.' });
+    const user = await findUserByNormalizedEmail(email);
+    if (!user || !user.otpHash || !user.otpExpiry || new Date(user.otpExpiry).getTime() < Date.now()) { if (user) { clearOtpState(user); await user.save(); } return res.status(400).json({ error: 'Invalid or expired OTP' }); }
+    if ((user.otpAttempts || 0) >= OTP_MAX_ATTEMPTS) { clearOtpState(user); await user.save(); return res.status(400).json({ error: 'Maximum OTP attempts exceeded. Request a new OTP.' }); }
+    if (!(await bcryptjs.compare(String(otp), user.otpHash))) { user.otpAttempts = (user.otpAttempts || 0) + 1; if (user.otpAttempts >= OTP_MAX_ATTEMPTS) clearOtpState(user); await user.save(); return res.status(400).json({ error: 'Invalid or expired OTP' }); }
+    clearOtpState(user);
+    if (purpose === 'signup') { user.emailVerified = true; user.emailVerifiedAt = new Date(); await user.save(); return res.status(200).json({ message: 'Email verified successfully' }); }
+    if (purpose === 'login') { user.emailVerified = true; user.emailVerifiedAt = user.emailVerifiedAt || new Date(); const token = createJwtToken(user); user.token = token; await user.save(); return res.status(200).json({ message: 'OTP verified successfully', token, user: standardUserResponse(user) }); }
+    await user.save(); return res.status(200).json({ message: 'OTP verified successfully', resetAuthorization: createResetAuthorizationToken(user), expiresIn: 600 });
+  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
 
-app.post("/api/message", async (req, res) => {
+app.post('/api/conversation', requireAuth, async (req, res) => {
+  try { const receiver = await getVerifiedRecipient(req.body.receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); const conversation = await getOrCreateDirectConversation(req.auth.userId, receiver._id); return res.status(200).json({ conversationId: conversation._id }); }
+  catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+app.get('/api/conversations/:userId', requireAuth, async (req, res) => {
   try {
-    const { conversationId, senderId, message, receiverId = "" } = req.body;
-    if (!senderId || !message)
-      return res.status(400).send("Please fill all required fields");
-    if (conversationId === "new" && receiverId) {
-      const newConversation = new Conversations({
-        members: [senderId, receiverId],
-      });
-      await newConversation.save();
-      const newMessage = new Messages({
-        conversationId: newConversation._id,
-        senderId,
-        message,
-      });
-      await newMessage.save();
-      return res.status(200).send("Message sent successfully");
-    } else if (!conversationId && !receiverId) {
-      return res.status(400).send("Please fill all required fiels");
-    }
-    const newMessage = new Messages({ conversationId, senderId, message });
-    await newMessage.save();
-    res.status(200).send("Message sent successfully");
-  } catch (error) {
-    console.error(`Error: ${error}`);
-  }
+    if (toIdString(req.params.userId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized.' });
+    const conversations = await Conversations.find({ members: req.auth.userId }).sort({ updatedAt: -1 });
+    const data = await Promise.all(conversations.map(async (conversation) => {
+      const receiverId = getOtherMemberId(conversation, req.auth.userId); const receiver = await Users.findById(receiverId).select('_id email fullName lastSeen updatedAt');
+      const lastMessage = await Messages.findOne({ conversationId: toIdString(conversation._id) }).sort({ createdAt: -1 });
+      const unreadCount = await Messages.countDocuments({ conversationId: toIdString(conversation._id), senderId: receiverId, status: { $ne: 'read' }, isDeleted: { $ne: true } });
+      return { user: { receiverId: receiver?._id || receiverId, email: receiver?.email || '', fullName: receiver?.fullName || 'User', lastSeen: receiver?.lastSeen || receiver?.updatedAt || null }, conversationId: conversation._id,
+        lastMessage: lastMessage ? { message: lastMessage.isDeleted ? 'This message was deleted' : lastMessage.message, createdAt: lastMessage.createdAt, senderId: lastMessage.senderId, status: lastMessage.status } : null, unreadCount };
+    })); return res.status(200).json(data);
+  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-
-app.get("/api/message/:conversationId", async (req, res) => {
+app.post('/api/message', requireAuth, async (req, res) => {
   try {
-    const checkMessages = async (conversationId) => {
-      const messages = await Messages.find({ conversationId });
-      const messageUserData = await Promise.all(
-        messages.map(async (message) => {
-          const user = await Users.findById(message.senderId);
-          return {
-            user: { id: user._id, email: user.email, fullName: user.fullName },
-            message: message.message,
-          };
-        })
-      );
-      return res.status(200).json(messageUserData);
-    };
-    const conversationId = req.params.conversationId;
-    if (conversationId === "new") {
-      const checkConversation = await Conversations.find({
-        members: { $all: [req.query.senderId, req.query.receiverId] },
-      });
-      if (checkConversation.length > 0) {
-        checkMessages(checkConversation[0]._id);
-      } else {
-        return res.status(200).json([]);
-      }
-    } else {
-      checkMessages(conversationId);
-    }
-  } catch (error) {
-    console.error(`Error: ${error}`);
-    return res.status(500).json({ error: "Server error" });
-  }
+    const { conversationId, receiverId, message, replyTo = null } = req.body; if (!String(message || '').trim()) return res.status(400).json({ error: 'A message is required.' });
+    let conversation; let receiver;
+    if (conversationId === 'new') { receiver = await getVerifiedRecipient(receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); conversation = await getOrCreateDirectConversation(req.auth.userId, receiver._id); }
+    else { conversation = await requireConversationMember(conversationId, req.auth.userId); if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' }); const otherId = getOtherMemberId(conversation, req.auth.userId); if (receiverId && toIdString(receiverId) !== toIdString(otherId)) return res.status(400).json({ error: 'Invalid conversation recipient.' }); receiver = await Users.findById(otherId).select('_id'); if (!receiver) return res.status(404).json({ error: 'Conversation recipient not found.' }); }
+    const saved = await new Messages({ conversationId: toIdString(conversation._id), senderId: req.auth.userId, message: String(message).trim(), replyTo, status: isOnline(receiver._id) ? 'delivered' : 'sent' }).save();
+    await Conversations.findByIdAndUpdate(conversation._id, { $set: { updatedAt: new Date() } }); return res.status(200).json(await buildMessageResponse(saved));
+  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-
-app.get("/api/users/:userId", async (req, res) => {
+app.get('/api/message/:conversationId', requireAuth, async (req, res) => {
   try {
-    const userId = req.params.userId;
-    const users = await Users.find({ _id: { $ne: userId } }); // Fetch all users except the current user
-    const usersData = Promise.all(
-      users.map(async (user) => {
-        return {
-          user: {
-            email: user.email,
-            fullName: user.fullName,
-            receiverId: user._id,
-          },
-        };
-      })
-    );
-    res.status(200).json(await usersData);
-  } catch (error) {
-    console.error(`Error: ${error}`);
-    return res.status(500).json({ error: "Server error" });
-  }
+    let conversation;
+    if (req.params.conversationId === 'new') { const receiver = await getVerifiedRecipient(req.query.receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); conversation = await findConversationByMembers(req.auth.userId, receiver._id); if (!conversation) return res.status(200).json([]); }
+    else { conversation = await requireConversationMember(req.params.conversationId, req.auth.userId); if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' }); }
+    const rows = await Messages.find({ conversationId: toIdString(conversation._id) }).sort({ createdAt: 1 }); return res.status(200).json(await Promise.all(rows.map(buildMessageResponse)));
+  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+app.put('/api/message/:id', requireAuth, async (req, res) => {
+  try { const message = await Messages.findById(req.params.id); if (!message) return res.status(404).json({ error: 'Message not found.' }); if (toIdString(message.senderId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized to edit this message.' }); if (!(await requireConversationMember(message.conversationId, req.auth.userId))) return res.status(403).json({ error: 'Conversation access denied.' }); if (!String(req.body.message || '').trim()) return res.status(400).json({ error: 'A message is required.' }); message.message = String(req.body.message).trim(); message.isEdited = true; await message.save(); return res.status(200).json(await buildMessageResponse(message)); }
+  catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+app.delete('/api/message/:id', requireAuth, async (req, res) => {
+  try { const message = await Messages.findById(req.params.id); if (!message) return res.status(404).json({ error: 'Message not found.' }); if (toIdString(message.senderId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized to delete this message.' }); if (!(await requireConversationMember(message.conversationId, req.auth.userId))) return res.status(403).json({ error: 'Conversation access denied.' }); message.isDeleted = true; message.message = 'This message was deleted'; await message.save(); return res.status(200).json({ message: 'Message deleted successfully', id: message._id }); }
+  catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+app.post('/api/message/react', requireAuth, async (req, res) => {
+  try { const { messageId, emoji } = req.body; if (!messageId || !emoji) return res.status(400).json({ error: 'Missing required fields.' }); const message = await Messages.findById(messageId); if (!message) return res.status(404).json({ error: 'Message not found.' }); if (!(await requireConversationMember(message.conversationId, req.auth.userId))) return res.status(403).json({ error: 'Conversation access denied.' }); let reactions = message.reactions || []; const existing = reactions.findIndex((r) => toIdString(r.userId) === req.auth.userId && r.emoji === emoji); if (existing >= 0) reactions.splice(existing, 1); else { reactions = reactions.filter((r) => toIdString(r.userId) !== req.auth.userId); reactions.push({ userId: req.auth.userId, emoji }); } message.reactions = reactions; await message.save(); return res.status(200).json({ messageId: message._id, reactions }); }
+  catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+app.post('/api/message/read', requireAuth, async (req, res) => {
+  try { const conversation = await requireConversationMember(req.body.conversationId, req.auth.userId); if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' }); await Messages.updateMany({ conversationId: toIdString(conversation._id), senderId: { $ne: req.auth.userId }, status: { $ne: 'read' } }, { $set: { status: 'read' } }); return res.status(200).json({ message: 'Messages marked as read' }); }
+  catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+app.get('/api/users/:userId', requireAuth, async (req, res) => {
+  try { if (toIdString(req.params.userId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized.' }); const users = await Users.find({ _id: { $ne: req.auth.userId }, emailVerified: true }).select('_id email fullName lastSeen updatedAt'); return res.status(200).json(users.map((user) => ({ user: { email: user.email, fullName: user.fullName, receiverId: user._id, lastSeen: user.lastSeen || user.updatedAt || null } }))); }
+  catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
 
-server.listen(port, () => {
-  console.log("Listening on Port " + port);
-});
+server.listen(port, () => console.log(`Listening on Port ${port}`));

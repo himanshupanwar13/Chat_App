@@ -2,31 +2,73 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #E9D8FD;
+  background: #f5f3ff;
+}
+
+body.dark {
+  background: #020817;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
-/* Hide scrollbar for WebKit browsers (Chrome, Safari, Edge) */
-.sidebar-scrollable {
-  scrollbar-width: none; /* For Firefox */
-  -ms-overflow-style: none;  /* For Internet Explorer and Edge */
+* {
+  box-sizing: border-box;
 }
 
-.sidebar-scrollable::-webkit-scrollbar {
-  display: none; /* Safari and Chrome */
+button,
+input {
+  font: inherit;
 }
 
-::-webkit-scrollbar{
-  display: none;
+img {
+  display: block;
+  max-width: 100%;
+}
+
+.sidebar-scrollable,
+.chat-scrollable {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.85) transparent;
+}
+
+.sidebar-scrollable::-webkit-scrollbar,
+.chat-scrollable::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.sidebar-scrollable::-webkit-scrollbar-thumb,
+.chat-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.7);
+  border-radius: 9999px;
+}
+
+.sidebar-scrollable::-webkit-scrollbar-track,
+.chat-scrollable::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 767px) {
+  .chat-scrollable {
+    scrollbar-width: none;
+  }
+
+  .chat-scrollable::-webkit-scrollbar {
+    display: none;
+  }
 }

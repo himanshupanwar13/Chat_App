@@ -1,6 +1,6 @@
 # Node
 node_modules/
-
+server/backups/
 # Environment files
 .env
 .env.*
@@ -11,3 +11,4 @@ node_modules/
 
 # Build output
 /build
+

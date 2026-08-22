@@ -2,11 +2,19 @@ const Button = ({
     label = 'Button',
     type = 'button',
     className = '',
-    disabled = false
+    disabled = false,
+    onClick = () => {},
 }) => {
   return (
-      <button type={type} className={`text-white bg-purple-700 hover:bg-purple-700 focus:ring-4 focus:outline-none focus:ring-purple-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center  ${className}`} disabled={disabled}>{label}</button>
-  )
-}
+    <button
+      type={type}
+      onClick={onClick}
+      className={`inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition duration-200 hover:translate-y-[-1px] hover:shadow-xl hover:shadow-violet-500/25 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-60 dark:focus:ring-violet-500/30 ${className}`}
+      disabled={disabled}
+    >
+      {label}
+    </button>
+  );
+};
 
-export default Button
+export default Button;

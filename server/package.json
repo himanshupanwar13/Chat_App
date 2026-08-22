@@ -5,7 +5,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "node app.js",
-    "start": "node app.js"
+    "start": "node app.js",
+    "audit:data-integrity": "node scripts/audit-data-integrity.js",
+    "backfill:safe-data-integrity": "node scripts/audit-data-integrity.js --backfill-safe",
+    "backup:database": "node scripts/backup-database.js"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +23,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.8.0",
     "mongoose": "^8.6.0",
+    "nodemailer": "^9.0.5",
     "socket.io": "^4.7.5"
   },
   "devDependencies": {
