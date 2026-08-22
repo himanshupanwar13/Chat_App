@@ -14,7 +14,14 @@ getJwtSecret();
 const app = express();
 const server = http.createServer(app);
 const port = process.env.PORT || 8000;
-const allowedOrigins = ['http://localhost:3000', process.env.CLIENT_URL?.replace(/\/$/, '')].filter(Boolean);
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://chatterflow.tech',
+  'https://www.chatterflow.tech',
+  'https://chatterflow.vercel.app',
+  process.env.CLIENT_URL?.replace(/\/$/, ''),
+].filter(Boolean);
 const io = require('socket.io')(server, { cors: { origin: allowedOrigins, methods: ['GET', 'POST'] } });
 
 require('./db/connection');
