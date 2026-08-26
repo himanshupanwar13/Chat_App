@@ -1,13 +1,16 @@
 require('dotenv').config();
 
+const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
+const multer = require('multer');
 const bcryptjs = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const http = require('http');
 const mongoose = require('mongoose');
 const { sendOtpEmail } = require('./services/emailService');
+const { processAttachmentUpload, MAX_FILE_SIZE } = require('./services/uploadService');
 const { extractBearerToken, getJwtSecret, requireAuth, verifyJwt } = require('./middleware/auth');
 const { findConversationByMembers, getOrCreateDirectConversation, getOtherMemberId, isConversationMember, toIdString } = require('./utils/chat');
 
@@ -72,12 +75,32 @@ const requireConversationMember = async (conversationId, userId) => {
   const conversation = await Conversations.findById(conversationId);
   return conversation && isConversationMember(conversation, userId) ? conversation : null;
 };
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE },
+});
+
 const buildMessageResponse = async (message) => {
   const sender = await Users.findById(message.senderId).select('_id email fullName');
-  return { _id: message._id, id: message._id, conversationId: message.conversationId, senderId: message.senderId,
-    message: message.isDeleted ? 'This message was deleted' : message.message, status: message.status, replyTo: message.replyTo || null,
-    reactions: message.reactions || [], isEdited: Boolean(message.isEdited), isDeleted: Boolean(message.isDeleted), createdAt: message.createdAt,
-    user: { id: sender?._id || message.senderId, email: sender?.email || '', fullName: sender?.fullName || 'User' } };
+  return {
+    _id: message._id,
+    id: message._id,
+    conversationId: message.conversationId,
+    senderId: message.senderId,
+    message: message.isDeleted ? 'This message was deleted' : (message.message || ''),
+    attachments: message.isDeleted ? [] : (message.attachments || []),
+    status: message.status,
+    replyTo: message.replyTo || null,
+    reactions: message.reactions || [],
+    isEdited: Boolean(message.isEdited),
+    isDeleted: Boolean(message.isDeleted),
+    createdAt: message.createdAt,
+    user: {
+      id: sender?._id || message.senderId,
+      email: sender?.email || '',
+      fullName: sender?.fullName || 'User',
+    },
+  };
 };
 const requireSocketConversationMember = async (socket, conversationId, receiverId) => {
   const conversation = await requireConversationMember(conversationId, socket.data.userId);
@@ -89,6 +112,7 @@ const requireSocketConversationMember = async (socket, conversationId, receiverI
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(cors({ origin: allowedOrigins, methods: ['GET', 'POST', 'PUT', 'DELETE'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 
 io.use(async (socket, next) => {
@@ -260,6 +284,71 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
+const formatLastMessageText = (msg) => {
+  if (!msg) return '';
+  if (msg.isDeleted) return 'This message was deleted';
+  if (msg.message && String(msg.message).trim()) return msg.message;
+  if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+    const first = msg.attachments[0];
+    if (first.type === 'image') return '📷 Photo';
+    return `📄 ${first.fileName || 'Document'}`;
+  }
+  return '';
+};
+
+app.post('/api/upload', requireAuth, (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File size exceeds maximum allowed limit of 25 MB.' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload error.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded.' });
+    }
+
+    const { conversationId, receiverId } = req.body || {};
+    if (!conversationId) {
+      return res.status(400).json({ error: 'conversationId is required.' });
+    }
+
+    if (conversationId === 'new') {
+      const receiver = await getVerifiedRecipient(receiverId, req.auth.userId);
+      if (!receiver) {
+        return res.status(400).json({ error: 'A verified recipient is required.' });
+      }
+    } else {
+      const conversation = await requireConversationMember(conversationId, req.auth.userId);
+      if (!conversation) {
+        return res.status(403).json({ error: 'Conversation access denied.' });
+      }
+    }
+
+    const attachment = await processAttachmentUpload({
+      buffer: file.buffer,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      size: file.size,
+      conversationId,
+    });
+
+    return res.status(200).json(attachment);
+  } catch (error) {
+    console.error('Upload error:', error);
+    const statusCode = error.statusCode || (error.code === 'LIMIT_FILE_SIZE' ? 400 : 500);
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'File size exceeds maximum allowed limit of 25 MB.'
+      : (error.message || 'File upload failed.');
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
 app.post('/api/conversation', requireAuth, async (req, res) => {
   try { const receiver = await getVerifiedRecipient(req.body.receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); const conversation = await getOrCreateDirectConversation(req.auth.userId, receiver._id); return res.status(200).json({ conversationId: conversation._id }); }
   catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
@@ -273,19 +362,52 @@ app.get('/api/conversations/:userId', requireAuth, async (req, res) => {
       const lastMessage = await Messages.findOne({ conversationId: toIdString(conversation._id) }).sort({ createdAt: -1 });
       const unreadCount = await Messages.countDocuments({ conversationId: toIdString(conversation._id), senderId: receiverId, status: { $ne: 'read' }, isDeleted: { $ne: true } });
       return { user: { receiverId: receiver?._id || receiverId, email: receiver?.email || '', fullName: receiver?.fullName || 'User', lastSeen: receiver?.lastSeen || receiver?.updatedAt || null }, conversationId: conversation._id,
-        lastMessage: lastMessage ? { message: lastMessage.isDeleted ? 'This message was deleted' : lastMessage.message, createdAt: lastMessage.createdAt, senderId: lastMessage.senderId, status: lastMessage.status } : null, unreadCount };
+        lastMessage: lastMessage ? { message: formatLastMessageText(lastMessage), createdAt: lastMessage.createdAt, senderId: lastMessage.senderId, status: lastMessage.status } : null, unreadCount };
     })); return res.status(200).json(data);
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
 app.post('/api/message', requireAuth, async (req, res) => {
   try {
-    const { conversationId, receiverId, message, replyTo = null } = req.body; if (!String(message || '').trim()) return res.status(400).json({ error: 'A message is required.' });
-    let conversation; let receiver;
-    if (conversationId === 'new') { receiver = await getVerifiedRecipient(receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); conversation = await getOrCreateDirectConversation(req.auth.userId, receiver._id); }
-    else { conversation = await requireConversationMember(conversationId, req.auth.userId); if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' }); const otherId = getOtherMemberId(conversation, req.auth.userId); if (receiverId && toIdString(receiverId) !== toIdString(otherId)) return res.status(400).json({ error: 'Invalid conversation recipient.' }); receiver = await Users.findById(otherId).select('_id'); if (!receiver) return res.status(404).json({ error: 'Conversation recipient not found.' }); }
-    const saved = await new Messages({ conversationId: toIdString(conversation._id), senderId: req.auth.userId, message: String(message).trim(), replyTo, status: isOnline(receiver._id) ? 'delivered' : 'sent' }).save();
-    await Conversations.findByIdAndUpdate(conversation._id, { $set: { updatedAt: new Date() } }); return res.status(200).json(await buildMessageResponse(saved));
-  } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+    const { conversationId, receiverId, message = '', attachments = [], replyTo = null } = req.body;
+    const trimmedMessage = String(message || '').trim();
+    const validAttachments = Array.isArray(attachments) ? attachments : [];
+
+    if (!trimmedMessage && validAttachments.length === 0) {
+      return res.status(400).json({ error: 'A message or attachment is required.' });
+    }
+
+    let conversation;
+    let receiver;
+    if (conversationId === 'new') {
+      receiver = await getVerifiedRecipient(receiverId, req.auth.userId);
+      if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' });
+      conversation = await getOrCreateDirectConversation(req.auth.userId, receiver._id);
+    } else {
+      conversation = await requireConversationMember(conversationId, req.auth.userId);
+      if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' });
+      const otherId = getOtherMemberId(conversation, req.auth.userId);
+      if (receiverId && toIdString(receiverId) !== toIdString(otherId)) {
+        return res.status(400).json({ error: 'Invalid conversation recipient.' });
+      }
+      receiver = await Users.findById(otherId).select('_id');
+      if (!receiver) return res.status(404).json({ error: 'Conversation recipient not found.' });
+    }
+
+    const saved = await new Messages({
+      conversationId: toIdString(conversation._id),
+      senderId: req.auth.userId,
+      message: trimmedMessage,
+      attachments: validAttachments,
+      replyTo,
+      status: isOnline(receiver._id) ? 'delivered' : 'sent',
+    }).save();
+
+    await Conversations.findByIdAndUpdate(conversation._id, { $set: { updatedAt: new Date() } });
+    return res.status(200).json(await buildMessageResponse(saved));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 app.get('/api/message/:conversationId', requireAuth, async (req, res) => {
   try {

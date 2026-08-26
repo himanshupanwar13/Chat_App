@@ -1,6 +1,8 @@
 # Node
 node_modules/
 server/backups/
+server/uploads/
+uploads/
 # Environment files
 .env
 .env.*

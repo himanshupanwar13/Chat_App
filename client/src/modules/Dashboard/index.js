@@ -10,10 +10,16 @@ import {
   Ban,
   Check,
   CheckCheck,
+  Download,
+  File,
+  FileArchive,
+  FileSpreadsheet,
+  FileText,
   Loader2,
   LogOut,
   MessageSquare,
   Moon,
+  Paperclip,
   Pencil,
   Pin,
   PinOff,
@@ -36,6 +42,26 @@ const getAuthHeaders = () => {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+};
+
+const resolveMediaUrl = (url) => {
+  if (!url) return '';
+  if (
+    url.startsWith('http://') ||
+    url.startsWith('https://') ||
+    url.startsWith('blob:') ||
+    url.startsWith('data:')
+  ) {
+    return url;
+  }
+  return `${API_BASE_URL.replace(/\/$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes || isNaN(bytes)) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const Dashboard = () => {
@@ -115,6 +141,61 @@ const Dashboard = () => {
 
   const messageRef = useRef(null);
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Attachment & Lightbox state
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [filePreview, setFilePreview] = useState(null);
+  const [lightboxImage, setLightboxImage] = useState(null);
+
+  useEffect(() => {
+    return () => {
+      if (filePreview?.url && filePreview.url.startsWith('blob:')) {
+        URL.revokeObjectURL(filePreview.url);
+      }
+    };
+  }, [filePreview]);
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isImage = file.type.startsWith('image/');
+    const maxSize = isImage ? 10 * 1024 * 1024 : 25 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setToast({
+        type: 'error',
+        message: `File exceeds maximum size limit of ${isImage ? '10 MB' : '25 MB'}.`,
+      });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    if (filePreview?.url && filePreview.url.startsWith('blob:')) {
+      URL.revokeObjectURL(filePreview.url);
+    }
+
+    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+    setSelectedFile(file);
+    setFilePreview({
+      url: previewUrl,
+      type: isImage ? 'image' : 'file',
+      name: file.name,
+      size: file.size,
+      mimeType: file.type,
+    });
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const clearSelectedFile = () => {
+    if (filePreview?.url && filePreview.url.startsWith('blob:')) {
+      URL.revokeObjectURL(filePreview.url);
+    }
+    setSelectedFile(null);
+    setFilePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   // --------------------------------------------------
   // Save pinned conversations
@@ -841,6 +922,7 @@ const Dashboard = () => {
       setReplyingTo(null);
       setEditingMessage(null);
       setTypingData(null);
+      clearSelectedFile();
       setHasMoreMessages(true);
       setLoadingOlderMessages(false);
       loadingOlderRef.current = false;
@@ -1059,25 +1141,22 @@ const Dashboard = () => {
     e.preventDefault();
 
     if (
-      !message.trim() ||
+      (!message.trim() && !selectedFile) ||
       !messages?.receiver ||
       !user?.id
     ) {
       return;
     }
 
-    const trimmedMessage =
-      message.trim();
+    const trimmedMessage = message.trim();
 
     if (isTypingRef.current) {
       isTypingRef.current = false;
 
       socket?.emit('stopTyping', {
         senderId: user.id,
-        receiverId:
-          messages.receiver.receiverId,
-        conversationId:
-          messages.conversationId,
+        receiverId: messages.receiver.receiverId,
+        conversationId: messages.conversationId,
       });
     }
 
@@ -1102,42 +1181,28 @@ const Dashboard = () => {
         );
 
         if (!res.ok) {
-          throw new Error(
-            'Failed to edit message'
-          );
+          throw new Error('Failed to edit message');
         }
 
         setMessages((prev) => ({
           ...prev,
-          messages:
-            prev.messages.map((m) =>
-              String(
-                m._id || m.id
-              ) ===
-              String(
-                editingMessage.id
-              )
-                ? {
-                    ...m,
-                    message:
-                      trimmedMessage,
-                    isEdited: true,
-                  }
-                : m
-            ),
+          messages: prev.messages.map((m) =>
+            String(m._id || m.id) === String(editingMessage.id)
+              ? {
+                  ...m,
+                  message: trimmedMessage,
+                  isEdited: true,
+                }
+              : m
+          ),
         }));
 
         socket?.emit('editMessage', {
-          messageId:
-            editingMessage.id,
-          conversationId:
-            messages.conversationId,
+          messageId: editingMessage.id,
+          conversationId: messages.conversationId,
           senderId: user.id,
-          receiverId:
-            messages.receiver
-              .receiverId,
-          message:
-            trimmedMessage,
+          receiverId: messages.receiver.receiverId,
+          message: trimmedMessage,
         });
 
         setEditingMessage(null);
@@ -1145,8 +1210,7 @@ const Dashboard = () => {
       } catch (err) {
         setToast({
           type: 'error',
-          message:
-            'Failed to update message.',
+          message: 'Failed to update message.',
         });
       } finally {
         setSending(false);
@@ -1156,33 +1220,82 @@ const Dashboard = () => {
     }
 
     // --------------------------------------------------
+    // Upload Attachment (if present)
+    // --------------------------------------------------
+
+    let uploadedAttachments = [];
+    const currentSelectedFile = selectedFile;
+    const currentFilePreview = filePreview;
+
+    if (currentSelectedFile) {
+      try {
+        setSending(true);
+        const formData = new FormData();
+        formData.append('file', currentSelectedFile);
+        formData.append('conversationId', messages.conversationId || 'new');
+        if (messages.receiver?.receiverId) {
+          formData.append('receiverId', messages.receiver.receiverId);
+        }
+
+        const token = localStorage.getItem('user:token');
+        const uploadRes = await fetch(`${API_BASE_URL}/api/upload`, {
+          method: 'POST',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: formData,
+        });
+
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to upload attachment.');
+        }
+
+        const attachmentData = await uploadRes.json();
+        uploadedAttachments = [attachmentData];
+      } catch (uploadErr) {
+        setToast({
+          type: 'error',
+          message: uploadErr.message || 'Failed to upload attachment.',
+        });
+        setSending(false);
+        return;
+      }
+    }
+
+    // --------------------------------------------------
     // Optimistic Message
     // --------------------------------------------------
 
-    const tempId =
-      'temp_' + Date.now();
+    const tempId = 'temp_' + Date.now();
+
+    const optimisticAttachments = uploadedAttachments.length > 0
+      ? uploadedAttachments
+      : currentFilePreview
+      ? [
+          {
+            type: currentFilePreview.type,
+            url: currentFilePreview.url,
+            fileName: currentFilePreview.name,
+            mimeType: currentFilePreview.mimeType,
+            size: currentFilePreview.size,
+          },
+        ]
+      : [];
 
     const optimisticMessage = {
       _id: tempId,
       id: tempId,
-      conversationId:
-        messages.conversationId,
+      conversationId: messages.conversationId,
       senderId: user.id,
-      message:
-        trimmedMessage,
-      status: isUserOnline(
-        messages.receiver
-          .receiverId
-      )
-        ? 'delivered'
-        : 'sent',
-      replyTo:
-        replyingTo || null,
+      message: trimmedMessage,
+      attachments: optimisticAttachments,
+      status: isUserOnline(messages.receiver.receiverId) ? 'delivered' : 'sent',
+      replyTo: replyingTo || null,
       reactions: [],
       isEdited: false,
       isDeleted: false,
-      createdAt:
-        new Date().toISOString(),
+      createdAt: new Date().toISOString(),
       user: {
         id: user.id,
         fullName: user.fullName,
@@ -1195,91 +1308,61 @@ const Dashboard = () => {
 
     setMessages((prev) => ({
       ...prev,
-      messages: [
-        ...prev.messages,
-        optimisticMessage,
-      ],
+      messages: [...prev.messages, optimisticMessage],
     }));
 
     setMessage('');
+    clearSelectedFile();
 
-    const currentReply =
-      replyingTo;
-
+    const currentReply = replyingTo;
     setReplyingTo(null);
 
     try {
       setSending(true);
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/message`,
-        {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            conversationId:
-              messages.conversationId,
-            senderId: user.id,
-            message:
-              trimmedMessage,
-            receiverId:
-              messages.receiver
-                .receiverId,
-            replyTo:
-              currentReply,
-          }),
-        }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/message`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          conversationId: messages.conversationId,
+          senderId: user.id,
+          message: trimmedMessage,
+          attachments: uploadedAttachments,
+          receiverId: messages.receiver.receiverId,
+          replyTo: currentReply,
+        }),
+      });
 
       if (!res.ok) {
-        throw new Error(
-          'Failed to send message'
-        );
+        throw new Error('Failed to send message');
       }
 
-      const savedMessage =
-        await res.json();
+      const savedMessage = await res.json();
 
       setMessages((prev) => ({
         ...prev,
-        conversationId:
-          savedMessage.conversationId ||
-          prev.conversationId,
-        messages:
-          prev.messages.map((m) =>
-            m._id === tempId
-              ? savedMessage
-              : m
-          ),
+        conversationId: savedMessage.conversationId || prev.conversationId,
+        messages: prev.messages.map((m) =>
+          m._id === tempId ? savedMessage : m
+        ),
       }));
 
-      socket?.emit(
-        'sendMessage',
-        {
-          _id:
-            savedMessage._id,
-          senderId: user.id,
-          receiverId:
-            messages.receiver
-              .receiverId,
-          message:
-            trimmedMessage,
-          conversationId:
-            savedMessage.conversationId ||
-            messages.conversationId,
-          replyTo:
-            currentReply,
-          createdAt:
-            savedMessage.createdAt,
-        }
-      );
+      socket?.emit('sendMessage', {
+        _id: savedMessage._id,
+        senderId: user.id,
+        receiverId: messages.receiver.receiverId,
+        message: trimmedMessage,
+        attachments: savedMessage.attachments || [],
+        conversationId: savedMessage.conversationId || messages.conversationId,
+        replyTo: currentReply,
+        createdAt: savedMessage.createdAt,
+      });
 
       fetchConversationsList();
     } catch (error) {
       setToast({
         type: 'error',
-        message:
-          'Your message could not be sent.',
+        message: 'Your message could not be sent.',
       });
     } finally {
       setSending(false);
@@ -1456,9 +1539,17 @@ const Dashboard = () => {
     msg,
     isCurrentUser
   ) => {
+    let previewText = msg.message;
+    if (!previewText && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+      previewText =
+        msg.attachments[0].type === 'image'
+          ? '📷 Photo'
+          : `📄 ${msg.attachments[0].fileName || 'Document'}`;
+    }
+
     setReplyingTo({
       id: msg._id || msg.id,
-      message: msg.message,
+      message: previewText || 'Attachment',
       senderName:
         isCurrentUser
           ? 'You'
@@ -2212,11 +2303,141 @@ const Dashboard = () => {
                                       </div>
                                     ) : (
                                       <>
-                                        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
-                                          {
-                                            msg.message
-                                          }
-                                        </p>
+                                        {/* Attachments */}
+                                        {Array.isArray(msg.attachments) &&
+                                          msg.attachments.length > 0 && (
+                                            <div className="mb-1.5 space-y-1.5">
+                                              {msg.attachments.map(
+                                                (att, attIdx) => {
+                                                  const isImg =
+                                                    att.type === 'image' ||
+                                                    att.mimeType?.startsWith(
+                                                      'image/'
+                                                    );
+                                                  const mediaUrl =
+                                                    resolveMediaUrl(
+                                                      att.url
+                                                    );
+
+                                                  if (isImg) {
+                                                    return (
+                                                      <div
+                                                        key={attIdx}
+                                                        className="relative overflow-hidden rounded-xl bg-black/5 dark:bg-black/20"
+                                                      >
+                                                        <img
+                                                          src={mediaUrl}
+                                                          alt={
+                                                            att.fileName ||
+                                                            'Attached image'
+                                                          }
+                                                          loading="lazy"
+                                                          onClick={() =>
+                                                            setLightboxImage({
+                                                              url: mediaUrl,
+                                                              name:
+                                                                att.fileName ||
+                                                                'Image',
+                                                            })
+                                                          }
+                                                          className="max-h-72 w-full max-w-sm cursor-pointer rounded-xl object-cover transition duration-200 hover:opacity-90 active:scale-[0.99]"
+                                                        />
+                                                      </div>
+                                                    );
+                                                  }
+
+                                                  return (
+                                                    <a
+                                                      key={attIdx}
+                                                      href={mediaUrl}
+                                                      download={
+                                                        att.fileName ||
+                                                        'download'
+                                                      }
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className={`flex items-center gap-3 rounded-xl p-2.5 transition ${
+                                                        isCurrentUser
+                                                          ? 'bg-white/15 text-white hover:bg-white/25'
+                                                          : 'bg-slate-100 text-slate-800 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-100 dark:hover:bg-slate-700'
+                                                      }`}
+                                                    >
+                                                      <div
+                                                        className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${
+                                                          isCurrentUser
+                                                            ? 'bg-white/20 text-white'
+                                                            : 'bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-400'
+                                                        }`}
+                                                      >
+                                                        {att.mimeType?.includes(
+                                                          'pdf'
+                                                        ) ? (
+                                                          <FileText
+                                                            className="h-5 w-5"
+                                                            aria-hidden="true"
+                                                          />
+                                                        ) : att.mimeType?.includes(
+                                                            'sheet'
+                                                          ) ||
+                                                          att.mimeType?.includes(
+                                                            'csv'
+                                                          ) ? (
+                                                          <FileSpreadsheet
+                                                            className="h-5 w-5"
+                                                            aria-hidden="true"
+                                                          />
+                                                        ) : att.mimeType?.includes(
+                                                            'zip'
+                                                          ) ? (
+                                                          <FileArchive
+                                                            className="h-5 w-5"
+                                                            aria-hidden="true"
+                                                          />
+                                                        ) : (
+                                                          <File
+                                                            className="h-5 w-5"
+                                                            aria-hidden="true"
+                                                          />
+                                                        )}
+                                                      </div>
+                                                      <div className="min-w-0 flex-1">
+                                                        <p
+                                                          className="truncate text-xs font-semibold"
+                                                          title={att.fileName}
+                                                        >
+                                                          {att.fileName ||
+                                                            'Document'}
+                                                        </p>
+                                                        <p
+                                                          className={`text-[11px] ${
+                                                            isCurrentUser
+                                                              ? 'text-violet-100'
+                                                              : 'text-slate-500 dark:text-slate-400'
+                                                          }`}
+                                                        >
+                                                          {formatFileSize(
+                                                            att.size
+                                                          )}
+                                                        </p>
+                                                      </div>
+                                                      <Download
+                                                        className="h-4 w-4 flex-shrink-0 opacity-80"
+                                                        aria-hidden="true"
+                                                      />
+                                                    </a>
+                                                  );
+                                                }
+                                              )}
+                                            </div>
+                                          )}
+
+                                        {Boolean(
+                                          msg.message && msg.message.trim()
+                                        ) && (
+                                          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
+                                            {msg.message}
+                                          </p>
+                                        )}
 
                                         {/* Footer */}
                                         <div
@@ -2439,13 +2660,81 @@ const Dashboard = () => {
                       </div>
                     )}
 
+                    {/* Attachment Preview Tray */}
+                    {filePreview && (
+                      <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-3 rounded-2xl border border-violet-200 bg-violet-50/90 p-2.5 shadow-sm backdrop-blur dark:border-violet-800/50 dark:bg-violet-950/50">
+                        <div className="flex min-w-0 items-center gap-3">
+                          {filePreview.type === 'image' ? (
+                            <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-xl border border-violet-300 dark:border-violet-700">
+                              <img
+                                src={filePreview.url}
+                                alt="Attachment preview"
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-violet-200 text-violet-700 dark:bg-violet-900/60 dark:text-violet-300">
+                              {filePreview.mimeType?.includes('pdf') ? (
+                                <FileText className="h-6 w-6" aria-hidden="true" />
+                              ) : filePreview.mimeType?.includes('sheet') ||
+                                filePreview.mimeType?.includes('csv') ? (
+                                <FileSpreadsheet className="h-6 w-6" aria-hidden="true" />
+                              ) : filePreview.mimeType?.includes('zip') ? (
+                                <FileArchive className="h-6 w-6" aria-hidden="true" />
+                              ) : (
+                                <File className="h-6 w-6" aria-hidden="true" />
+                              )}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">
+                              {filePreview.name}
+                            </p>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {formatFileSize(filePreview.size)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={clearSelectedFile}
+                          disabled={sending}
+                          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 transition hover:bg-slate-300 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                          aria-label="Remove attachment"
+                          title="Remove attachment"
+                        >
+                          <X className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
+
                     {/* Input */}
                     <form
-                      onSubmit={
-                        sendMessage
-                      }
+                      onSubmit={sendMessage}
                       className="mx-auto flex w-full max-w-3xl items-center gap-2 sm:gap-3"
                     >
+                      {/* Hidden File Input */}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={handleFileSelect}
+                        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,application/zip,application/x-zip-compressed"
+                      />
+
+                      {/* Attachment Trigger Button */}
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={sending || Boolean(editingMessage)}
+                        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 shadow-sm transition hover:border-violet-300 hover:bg-violet-50 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-violet-500/40 dark:hover:bg-slate-700/80 dark:hover:text-violet-300"
+                        aria-label="Attach file or image"
+                        title="Attach file or image"
+                      >
+                        <Paperclip className="h-5 w-5" aria-hidden="true" />
+                      </button>
+
                       <div className="relative min-w-0 flex-1">
                         <input
                           ref={inputRef}
@@ -2455,14 +2744,12 @@ const Dashboard = () => {
                               ? 'Edit your message...'
                               : replyingTo
                               ? 'Type your reply...'
+                              : filePreview
+                              ? 'Add a caption (optional)...'
                               : 'Type your message…'
                           }
-                          value={
-                            message
-                          }
-                          onChange={
-                            handleInputChange
-                          }
+                          value={message}
+                          onChange={handleInputChange}
                           className="block w-full rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-800 shadow-inner transition focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-violet-500/20"
                           autoComplete="off"
                         />
@@ -2471,7 +2758,7 @@ const Dashboard = () => {
                       <button
                         type="submit"
                         disabled={
-                          !message.trim() ||
+                          (!message.trim() && !selectedFile) ||
                           sending
                         }
                         className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-500/20 transition hover:-translate-y-[1px] hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2667,6 +2954,60 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* ==================================================
+          IMAGE LIGHTBOX MODAL
+      ================================================== */}
+
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md transition-all animate-fade-in"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div
+            className="relative flex max-h-[90vh] max-w-[90vw] flex-col overflow-hidden rounded-2xl bg-slate-950 shadow-2xl ring-1 ring-white/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top Bar */}
+            <div className="flex items-center justify-between border-b border-white/10 bg-slate-900/80 px-4 py-3 text-white backdrop-blur">
+              <span className="truncate pr-4 text-xs sm:text-sm font-medium">
+                {lightboxImage.name}
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={lightboxImage.url}
+                  download={lightboxImage.name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                  aria-label="Download image"
+                  title="Download image"
+                >
+                  <Download className="h-4 w-4" aria-hidden="true" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setLightboxImage(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                  aria-label="Close image viewer"
+                  title="Close image viewer"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            {/* Image Preview */}
+            <div className="flex min-h-0 flex-1 items-center justify-center p-2">
+              <img
+                src={lightboxImage.url}
+                alt={lightboxImage.name}
+                className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ==================================================
           TOAST
