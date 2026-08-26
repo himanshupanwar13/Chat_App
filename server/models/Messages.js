@@ -38,6 +38,10 @@ const messageSchema = mongoose.Schema({
 
 messageSchema.index({ conversationId: 1, createdAt: 1 }, { name: 'messages_by_conversation_time' });
 messageSchema.index(
+    { conversationId: 1, createdAt: -1, _id: -1 },
+    { name: 'messages_pagination_cursor' }
+);
+messageSchema.index(
     { conversationId: 1, senderId: 1, status: 1, isDeleted: 1 },
     { name: 'messages_for_unread_counts' }
 );

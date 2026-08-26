@@ -1,7 +1,7 @@
 import Avatar from '../../assets/avatar.svg';
 import img1 from '../../assets/img1.svg';
 import Input from '../../components/input';
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { API_BASE_URL, SOCKET_URL } from '../../config';
 import { useNavigate } from 'react-router-dom';
@@ -82,6 +82,15 @@ const Dashboard = () => {
   );
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [showPeoplePanel, setShowPeoplePanel] = useState(false);
+
+  // Pagination states & refs
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const chatContainerRef = useRef(null);
+  const isPrependingRef = useRef(false);
+  const prevScrollSnapshotRef = useRef(null);
+  const loadingOlderRef = useRef(false);
+  const isInitialLoadRef = useRef(true);
 
   const messageRef = useRef(null);
   const inputRef = useRef(null);
@@ -285,6 +294,7 @@ const Dashboard = () => {
         String(data.conversationId) ===
           String(messages.conversationId)
       ) {
+        isPrependingRef.current = false;
         setMessages((prev) => {
           const exists = prev.messages.some(
             (m) =>
@@ -613,20 +623,38 @@ const Dashboard = () => {
   }, [user?.id]);
 
   // --------------------------------------------------
-  // Auto-scroll messages
+  // Auto-scroll & Pagination Scroll Adjustment
   // --------------------------------------------------
 
-  useEffect(() => {
-    if (messageRef.current) {
-      messageRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'end',
-      });
+  useLayoutEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    if (isPrependingRef.current && prevScrollSnapshotRef.current) {
+      const { scrollHeight: prevHeight, scrollTop: prevTop } = prevScrollSnapshotRef.current;
+      const heightDiff = container.scrollHeight - prevHeight;
+      container.scrollTop = prevTop + heightDiff;
+      isPrependingRef.current = false;
+      prevScrollSnapshotRef.current = null;
+    } else if (isInitialLoadRef.current && messages?.messages?.length > 0) {
+      container.scrollTop = container.scrollHeight;
+      isInitialLoadRef.current = false;
     }
-  }, [
-    messages?.messages,
-    typingData,
-  ]);
+  }, [messages?.messages]);
+
+  useEffect(() => {
+    if (isPrependingRef.current || isInitialLoadRef.current) return;
+    const container = chatContainerRef.current;
+    if (container) {
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 250;
+      if (isNearBottom && messageRef.current) {
+        messageRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'end',
+        });
+      }
+    }
+  }, [messages?.messages?.length, typingData]);
 
   // --------------------------------------------------
   // Pin / Unpin Conversation
@@ -742,7 +770,7 @@ const Dashboard = () => {
           person?.fullName
             ?.toLowerCase()
             .includes(query) ||
-          person?.email
+            person?.email
             ?.toLowerCase()
             .includes(query);
 
@@ -767,7 +795,7 @@ const Dashboard = () => {
   ]);
 
   // --------------------------------------------------
-  // Fetch Messages
+  // Fetch Messages (Initial Load with Pagination)
   // --------------------------------------------------
 
   const fetchMessages = async (
@@ -781,9 +809,15 @@ const Dashboard = () => {
       setReplyingTo(null);
       setEditingMessage(null);
       setTypingData(null);
+      setHasMoreMessages(true);
+      setLoadingOlderMessages(false);
+      loadingOlderRef.current = false;
+      isInitialLoadRef.current = true;
+      isPrependingRef.current = false;
+      prevScrollSnapshotRef.current = null;
 
       const res = await fetch(
-        `${API_BASE_URL}/api/message/${conversationId}?senderId=${user.id}&&receiverId=${receiver.receiverId}`,
+        `${API_BASE_URL}/api/message/${conversationId}?limit=30&senderId=${user.id}&&receiverId=${receiver.receiverId}`,
         {
           method: 'GET',
           headers: getAuthHeaders(),
@@ -797,12 +831,15 @@ const Dashboard = () => {
       }
 
       const resData = await res.json();
+      const rawMessages = Array.isArray(resData) ? resData : (resData.messages || []);
+      const hasMore = Array.isArray(resData) ? false : Boolean(resData.hasMore);
 
       setMessages({
-        messages: resData,
+        messages: rawMessages,
         receiver,
         conversationId,
       });
+      setHasMoreMessages(hasMore);
 
       fetch(
         `${API_BASE_URL}/api/message/read`,
@@ -844,6 +881,90 @@ const Dashboard = () => {
       });
     } finally {
       setLoadingMessages(false);
+    }
+  };
+
+  // --------------------------------------------------
+  // Load Older Messages (Infinite Scroll Up)
+  // --------------------------------------------------
+
+  const loadOlderMessages = async () => {
+    if (
+      loadingOlderRef.current ||
+      !hasMoreMessages ||
+      !messages?.conversationId ||
+      messages.conversationId === 'new' ||
+      !messages.messages.length
+    ) {
+      return;
+    }
+
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    const oldestMsg = messages.messages[0];
+    if (!oldestMsg) return;
+
+    const before = oldestMsg.createdAt;
+    const beforeId = oldestMsg._id || oldestMsg.id;
+
+    prevScrollSnapshotRef.current = {
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+    };
+    loadingOlderRef.current = true;
+    setLoadingOlderMessages(true);
+    isPrependingRef.current = true;
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/message/${messages.conversationId}?limit=30&before=${encodeURIComponent(before)}&beforeId=${encodeURIComponent(beforeId)}`,
+        {
+          method: 'GET',
+          headers: getAuthHeaders(),
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error('Failed to fetch older messages');
+      }
+
+      const resData = await res.json();
+      const fetchedMessages = Array.isArray(resData) ? resData : (resData.messages || []);
+      const hasMore = Array.isArray(resData) ? false : Boolean(resData.hasMore);
+
+      if (fetchedMessages.length > 0) {
+        setMessages((prev) => {
+          const existingIds = new Set(prev.messages.map((m) => String(m._id || m.id)));
+          const uniqueNew = fetchedMessages.filter((m) => !existingIds.has(String(m._id || m.id)));
+          return {
+            ...prev,
+            messages: [...uniqueNew, ...prev.messages],
+          };
+        });
+      }
+
+      setHasMoreMessages(hasMore);
+    } catch (err) {
+      console.error('Error loading older messages:', err);
+      isPrependingRef.current = false;
+      prevScrollSnapshotRef.current = null;
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlderMessages(false);
+    }
+  };
+
+  const handleChatScroll = (e) => {
+    const target = e.currentTarget;
+    if (
+      target.scrollTop <= 60 &&
+      hasMoreMessages &&
+      !loadingOlderRef.current &&
+      !loadingMessages &&
+      messages?.messages?.length > 0
+    ) {
+      loadOlderMessages();
     }
   };
 
@@ -1036,6 +1157,9 @@ const Dashboard = () => {
         email: user.email,
       },
     };
+
+    isPrependingRef.current = false;
+    isInitialLoadRef.current = false;
 
     setMessages((prev) => ({
       ...prev,
@@ -1792,8 +1916,31 @@ const Dashboard = () => {
               ) : messages?.receiver
                   ?.fullName ? (
                 <>
-                  <div className="chat-scrollable min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+                  <div
+                    ref={chatContainerRef}
+                    onScroll={handleChatScroll}
+                    className="chat-scrollable min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+                  >
                     <div className="mx-auto w-full max-w-3xl space-y-4">
+                      {/* Loading older messages indicator */}
+                      {loadingOlderMessages && (
+                        <div className="flex items-center justify-center py-2 animate-fade-in-up">
+                          <div className="flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3.5 py-1 text-xs font-medium text-violet-700 shadow-xs dark:border-violet-500/30 dark:bg-slate-800 dark:text-violet-300">
+                            <span className="h-2 w-2 rounded-full bg-violet-600 animate-ping" />
+                            <span>Loading older messages…</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Beginning of conversation notice */}
+                      {!hasMoreMessages && messages.messages.length >= 30 && (
+                        <div className="flex items-center justify-center py-2">
+                          <span className="rounded-full bg-slate-200/60 px-3 py-1 text-[11px] font-medium tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                            Beginning of conversation
+                          </span>
+                        </div>
+                      )}
+
                       {messages.messages
                         .length > 0 ? (
                         messages.messages.map(

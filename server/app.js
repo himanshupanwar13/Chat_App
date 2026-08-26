@@ -6,6 +6,7 @@ const bcryptjs = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const http = require('http');
+const mongoose = require('mongoose');
 const { sendOtpEmail } = require('./services/emailService');
 const { extractBearerToken, getJwtSecret, requireAuth, verifyJwt } = require('./middleware/auth');
 const { findConversationByMembers, getOrCreateDirectConversation, getOtherMemberId, isConversationMember, toIdString } = require('./utils/chat');
@@ -231,9 +232,54 @@ app.post('/api/message', requireAuth, async (req, res) => {
 app.get('/api/message/:conversationId', requireAuth, async (req, res) => {
   try {
     let conversation;
-    if (req.params.conversationId === 'new') { const receiver = await getVerifiedRecipient(req.query.receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); conversation = await findConversationByMembers(req.auth.userId, receiver._id); if (!conversation) return res.status(200).json([]); }
-    else { conversation = await requireConversationMember(req.params.conversationId, req.auth.userId); if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' }); }
-    const rows = await Messages.find({ conversationId: toIdString(conversation._id) }).sort({ createdAt: 1 }); return res.status(200).json(await Promise.all(rows.map(buildMessageResponse)));
+    if (req.params.conversationId === 'new') {
+      const receiver = await getVerifiedRecipient(req.query.receiverId, req.auth.userId);
+      if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' });
+      conversation = await findConversationByMembers(req.auth.userId, receiver._id);
+      if (!conversation) return res.status(200).json({ messages: [], hasMore: false, nextCursor: null, oldestId: null });
+    } else {
+      conversation = await requireConversationMember(req.params.conversationId, req.auth.userId);
+      if (!conversation) return res.status(403).json({ error: 'Conversation access denied.' });
+    }
+
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = isNaN(rawLimit) || rawLimit <= 0 ? 30 : Math.min(rawLimit, 50);
+    const { before, beforeId } = req.query;
+
+    const query = { conversationId: toIdString(conversation._id) };
+    if (before) {
+      const beforeDate = new Date(before);
+      if (!isNaN(beforeDate.getTime())) {
+        if (beforeId && mongoose.Types.ObjectId.isValid(beforeId)) {
+          query.$or = [
+            { createdAt: { $lt: beforeDate } },
+            { createdAt: beforeDate, _id: { $lt: new mongoose.Types.ObjectId(beforeId) } }
+          ];
+        } else {
+          query.createdAt = { $lt: beforeDate };
+        }
+      }
+    } else if (beforeId && mongoose.Types.ObjectId.isValid(beforeId)) {
+      query._id = { $lt: new mongoose.Types.ObjectId(beforeId) };
+    }
+
+    const rawRows = await Messages.find(query)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit + 1);
+
+    const hasMore = rawRows.length > limit;
+    const pageRows = hasMore ? rawRows.slice(0, limit) : rawRows;
+    pageRows.reverse();
+
+    const formattedMessages = await Promise.all(pageRows.map(buildMessageResponse));
+    const oldestMessage = formattedMessages[0] || null;
+
+    return res.status(200).json({
+      messages: formattedMessages,
+      hasMore,
+      nextCursor: oldestMessage ? oldestMessage.createdAt : null,
+      oldestId: oldestMessage ? (oldestMessage._id || oldestMessage.id) : null
+    });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
 app.put('/api/message/:id', requireAuth, async (req, res) => {
