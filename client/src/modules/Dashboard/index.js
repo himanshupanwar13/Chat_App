@@ -5,6 +5,27 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallba
 import { io } from 'socket.io-client';
 import { API_BASE_URL, SOCKET_URL } from '../../config';
 import { useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Ban,
+  Check,
+  CheckCheck,
+  Loader2,
+  LogOut,
+  MessageSquare,
+  Moon,
+  Pencil,
+  Pin,
+  PinOff,
+  Reply,
+  Search,
+  SendHorizontal,
+  Sun,
+  Trash2,
+  UserPlus,
+  Users,
+  X,
+} from 'lucide-react';
 
 const EMOJI_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
@@ -264,7 +285,7 @@ const Dashboard = () => {
       The action bar contains several buttons and can be
       taller than the original 52px estimate.
     */
-    const pickerHeight = 70;
+    const pickerHeight = 56;
 
     const roomAbove =
       messageBounds.top - viewportBounds.top;
@@ -272,12 +293,23 @@ const Dashboard = () => {
     const roomBelow =
       viewportBounds.bottom - messageBounds.bottom;
 
-    setReactionPickerPlacement({
-      messageId,
-      placement:
-        roomAbove < pickerHeight && roomBelow >= pickerHeight
-          ? 'below'
-          : 'above',
+    const nextPlacement =
+      roomAbove < pickerHeight && roomBelow >= pickerHeight
+        ? 'below'
+        : 'above';
+
+    setReactionPickerPlacement((prev) => {
+      if (
+        prev.messageId === messageId &&
+        prev.placement === nextPlacement
+      ) {
+        return prev;
+      }
+
+      return {
+        messageId,
+        placement: nextPlacement,
+      };
     });
   };
 
@@ -1517,38 +1549,42 @@ const Dashboard = () => {
                   <div className="flex flex-shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      aria-label="Open people"
+                      aria-label="Find people"
                       title="Find people"
                       onClick={() => setShowPeoplePanel(true)}
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-sm shadow-sm transition hover:border-violet-200 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
+                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
                     >
-                      👥
+                      <Users className="h-4 w-4" aria-hidden="true" />
                     </button>
 
                     <button
                       type="button"
-                      aria-label="Toggle theme"
+                      aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                      title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
                       onClick={() =>
                         setDarkMode(
                           (prev) => !prev
                         )
                       }
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-sm shadow-sm transition hover:border-violet-200 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                     >
-                      {darkMode
-                        ? '☀️'
-                        : '🌙'}
+                      {darkMode ? (
+                        <Sun className="h-4 w-4 text-amber-500" aria-hidden="true" />
+                      ) : (
+                        <Moon className="h-4 w-4 text-slate-700 dark:text-slate-200" aria-hidden="true" />
+                      )}
                     </button>
 
                     <button
                       type="button"
+                      aria-label="Log out"
                       title="Log out"
                       onClick={
                         handleLogout
                       }
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-sm text-red-500 shadow-sm transition hover:border-red-200 hover:bg-red-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-red-950/40"
+                      className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-red-500 shadow-sm transition hover:border-red-200 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-red-950/40"
                     >
-                      🚪
+                      <LogOut className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -1561,7 +1597,7 @@ const Dashboard = () => {
 
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                      ⌕
+                      <Search className="h-4 w-4" aria-hidden="true" />
                     </span>
 
                     <Input
@@ -1595,10 +1631,9 @@ const Dashboard = () => {
                   <button
                     type="button"
                     onClick={() => setShowPeoplePanel(true)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 shadow-xs transition hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-950/50 dark:text-violet-300 lg:hidden"
-                    aria-label="Find people"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 shadow-xs transition hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-violet-500/30 dark:bg-violet-950/50 dark:text-violet-300 lg:hidden"
                   >
-                    <span>👥</span>
+                    <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>New Chat</span>
                   </button>
                 </div>
@@ -1672,8 +1707,8 @@ const Dashboard = () => {
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   {isPinned && (
-                                    <span className="flex-shrink-0 text-xs text-amber-500">
-                                      📌
+                                    <span className="flex-shrink-0" title="Pinned conversation">
+                                      <Pin className="h-3 w-3 fill-amber-400 text-amber-500" aria-hidden="true" />
                                     </span>
                                   )}
 
@@ -1729,6 +1764,7 @@ const Dashboard = () => {
 
                             <button
                               type="button"
+                              aria-label={isPinned ? 'Unpin chat' : 'Pin chat'}
                               title={
                                 isPinned
                                   ? 'Unpin chat'
@@ -1740,11 +1776,13 @@ const Dashboard = () => {
                                   e
                                 )
                               }
-                              className="absolute right-2 top-2 hidden rounded-full p-1 text-xs text-slate-400 opacity-0 transition group-hover:block group-hover:opacity-100 hover:text-amber-500"
+                              className="absolute right-2 top-2 hidden rounded-full p-1 text-slate-400 opacity-0 transition group-hover:block group-hover:opacity-100 hover:text-amber-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
                             >
-                              {isPinned
-                                ? '📍'
-                                : '📌'}
+                              {isPinned ? (
+                                <PinOff className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
+                              ) : (
+                                <Pin className="h-3.5 w-3.5" aria-hidden="true" />
+                              )}
                             </button>
                           </div>
                         );
@@ -1779,7 +1817,9 @@ const Dashboard = () => {
                 <div className="flex min-w-0 items-center gap-3">
                   <button
                     type="button"
-                    className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-base text-slate-700 lg:hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    aria-label="Back to conversations"
+                    title="Back to conversations"
+                    className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 lg:hidden"
                     onClick={() => {
                       setMessages({
                         messages: [],
@@ -1793,7 +1833,7 @@ const Dashboard = () => {
                       );
                     }}
                   >
-                    ←
+                    <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                   </button>
 
                   {messages?.receiver
@@ -1873,34 +1913,38 @@ const Dashboard = () => {
                   {messages?.conversationId && (
                     <button
                       type="button"
+                      aria-label={pinnedConversations.includes(messages.conversationId) ? 'Unpin conversation' : 'Pin conversation'}
+                      title={pinnedConversations.includes(messages.conversationId) ? 'Unpin conversation' : 'Pin conversation'}
                       onClick={(e) =>
                         togglePinConversation(
                           messages.conversationId,
                           e
                         )
                       }
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm text-slate-600 transition hover:border-violet-200 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                      title="Pin/Unpin Conversation"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                     >
                       {pinnedConversations.includes(
                         messages.conversationId
-                      )
-                        ? '📍'
-                        : '📌'}
+                      ) ? (
+                        <PinOff className="h-4 w-4 text-amber-500" aria-hidden="true" />
+                      ) : (
+                        <Pin className="h-4 w-4" aria-hidden="true" />
+                      )}
                     </button>
                   )}
 
                   <button
                     type="button"
-                    className="inline-flex rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:border-violet-200 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
                     aria-label="Open people panel"
+                    title="Open people panel"
                     onClick={() =>
                       setShowPeoplePanel(
                         (prev) => !prev
                       )
                     }
                   >
-                    👥
+                    <Users className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -1926,7 +1970,7 @@ const Dashboard = () => {
                       {loadingOlderMessages && (
                         <div className="flex items-center justify-center py-2 animate-fade-in-up">
                           <div className="flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3.5 py-1 text-xs font-medium text-violet-700 shadow-xs dark:border-violet-500/30 dark:bg-slate-800 dark:text-violet-300">
-                            <span className="h-2 w-2 rounded-full bg-violet-600 animate-ping" />
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-600 dark:text-violet-400" aria-hidden="true" />
                             <span>Loading older messages…</span>
                           </div>
                         </div>
@@ -1996,54 +2040,28 @@ const Dashboard = () => {
                                     messageId
                                   )
                                 }
-                                className={`group relative flex min-w-0 flex-col ${
+                                className={`group relative flex max-w-full min-w-0 flex-col ${
                                   isCurrentUser
                                     ? 'items-end'
                                     : 'items-start'
                                 } animate-fade-in-up`}
                               >
-                                {/* Reply-to quote bubble */}
-                                {msg.replyTo &&
-                                  !isDeleted && (
-                                    <div
-                                      className={`mb-1 max-w-[75%] rounded-xl border-l-4 border-violet-500 bg-slate-200/70 px-3 py-1.5 text-xs text-slate-700 dark:bg-slate-800/90 dark:text-slate-300 ${
-                                        isCurrentUser
-                                          ? 'text-right'
-                                          : 'text-left'
-                                      }`}
-                                    >
-                                      <span className="font-semibold text-violet-600 dark:text-violet-400">
-                                        {
-                                          msg
-                                            .replyTo
-                                            .senderName
-                                        }
-                                        :
-                                      </span>{' '}
-
-                                      <span className="break-words">
-                                        {
-                                          msg
-                                            .replyTo
-                                            .message
-                                        }
-                                      </span>
-                                    </div>
-                                  )}
-
-                                {/* Message + Action Bar */}
-                                <div className="relative flex min-w-0 items-start gap-1.5">
-
+                                {/* Message Block + Action Bar */}
+                                <div
+                                  className={`relative flex max-w-full min-w-0 flex-col ${
+                                    isCurrentUser ? 'items-end' : 'items-start'
+                                  }`}
+                                >
                                   {/* Action Bar */}
                                   {!isDeleted && (
                                     <div
-                                      className={`absolute z-30 hidden max-w-[calc(100vw-2rem)] items-center gap-1 whitespace-nowrap rounded-2xl border border-slate-200 bg-white/95 px-2 py-1 shadow-lg group-hover:flex dark:border-slate-700 dark:bg-slate-800/95 ${
+                                      className={`absolute z-30 hidden max-w-[calc(100vw-2rem)] items-center gap-1 whitespace-nowrap rounded-2xl border border-slate-200 bg-white/95 px-2 py-1 shadow-lg group-hover:flex dark:border-slate-700 dark:bg-slate-800/95 before:absolute before:-inset-x-2 before:content-[''] ${
                                         reactionPickerPlacement.messageId ===
                                           messageId &&
                                         reactionPickerPlacement.placement ===
                                           'below'
-                                          ? 'top-full mt-2'
-                                          : 'bottom-full mb-2'
+                                          ? 'top-[calc(100%+6px)] before:-top-2.5 before:h-4'
+                                          : 'bottom-[calc(100%+6px)] before:-bottom-2.5 before:h-4'
                                       } ${
                                         isCurrentUser
                                           ? 'right-0'
@@ -2083,6 +2101,7 @@ const Dashboard = () => {
                                       {/* Reply */}
                                       <button
                                         type="button"
+                                        aria-label="Reply to message"
                                         title="Reply"
                                         onClick={() =>
                                           handleStartReply(
@@ -2090,24 +2109,25 @@ const Dashboard = () => {
                                             isCurrentUser
                                           )
                                         }
-                                        className="rounded p-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-violet-600 dark:text-slate-400 dark:hover:bg-slate-700"
+                                        className="rounded p-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:bg-slate-700"
                                       >
-                                        ↩
+                                        <Reply className="h-3.5 w-3.5" aria-hidden="true" />
                                       </button>
 
                                       {/* Edit */}
                                       {isCurrentUser && (
                                         <button
                                           type="button"
+                                          aria-label="Edit message"
                                           title="Edit message"
                                           onClick={() =>
                                             handleStartEdit(
                                               msg
                                             )
                                           }
-                                          className="rounded p-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-violet-600 dark:text-slate-400 dark:hover:bg-slate-700"
+                                          className="rounded p-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:bg-slate-700"
                                         >
-                                          ✏️
+                                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                                         </button>
                                       )}
 
@@ -2115,91 +2135,150 @@ const Dashboard = () => {
                                       {isCurrentUser && (
                                         <button
                                           type="button"
+                                          aria-label="Delete message"
                                           title="Delete message"
                                           onClick={() =>
                                             handleDeleteMessage(
                                               messageId
                                             )
                                           }
-                                          className="rounded p-1 text-xs text-slate-500 hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-950/40"
+                                          className="rounded p-1 text-xs text-slate-500 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:text-slate-400 dark:hover:bg-red-950/40"
                                         >
-                                          🗑️
+                                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                                         </button>
                                       )}
                                     </div>
                                   )}
 
+                                  {/* Reply-to quote bubble */}
+                                  {msg.replyTo &&
+                                    !isDeleted && (
+                                      <div
+                                        className={`mb-1 max-w-[75%] rounded-xl border-l-4 border-violet-500 bg-slate-200/70 px-3 py-1.5 text-xs text-slate-700 dark:bg-slate-800/90 dark:text-slate-300 ${
+                                          isCurrentUser
+                                            ? 'text-right'
+                                            : 'text-left'
+                                        }`}
+                                      >
+                                        <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                          {
+                                            msg
+                                              .replyTo
+                                              .senderName
+                                          }
+                                          :
+                                        </span>{' '}
+
+                                        <span className="break-words">
+                                          {
+                                            msg
+                                              .replyTo
+                                              .message
+                                          }
+                                        </span>
+                                      </div>
+                                    )}
+
                                   {/* Message Bubble */}
                                   <div
-                                    className={`w-fit min-w-[80px] max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-sm sm:max-w-[75%] ${
+                                    className={`w-fit text-sm shadow-sm ${
+                                      isDeleted
+                                        ? 'min-w-0 max-w-full px-3 py-1'
+                                        : 'min-w-[80px] max-w-[80%] px-4 py-2.5 sm:max-w-[75%]'
+                                    } ${
                                       isCurrentUser
                                         ? isDeleted
-                                          ? 'rounded-br-md border border-slate-300 bg-slate-100 text-slate-400 italic dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
-                                          : 'rounded-br-md bg-gradient-to-r from-violet-600 to-indigo-600 text-white'
+                                          ? 'rounded-2xl rounded-br-md border border-slate-300 bg-slate-100 text-slate-400 italic dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
+                                          : 'rounded-2xl rounded-br-md bg-gradient-to-r from-violet-600 to-indigo-600 text-white'
                                         : isDeleted
-                                        ? 'rounded-bl-md border border-slate-200 bg-slate-50 text-slate-400 italic dark:border-slate-800 dark:bg-slate-900 dark:text-slate-500'
-                                        : 'rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:ring-slate-700'
+                                        ? 'rounded-2xl rounded-bl-md border border-slate-200 bg-slate-50 text-slate-400 italic dark:border-slate-800 dark:bg-slate-900 dark:text-slate-500'
+                                        : 'rounded-2xl rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:ring-slate-700'
                                     }`}
                                   >
-                                    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
-                                      {
-                                        msg.message
-                                      }
-                                    </p>
+                                    {isDeleted ? (
+                                      <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+                                        <Ban
+                                          className="h-3.5 w-3.5 flex-shrink-0 text-slate-400 dark:text-slate-500"
+                                          aria-hidden="true"
+                                        />
+                                        <span className="min-w-0 italic leading-none text-slate-400 dark:text-slate-500">
+                                          {isCurrentUser
+                                            ? 'You deleted this message'
+                                            : 'This message was deleted'}
+                                        </span>
+                                        <span className="flex-shrink-0 text-[10px] leading-none text-slate-400 dark:text-slate-500">
+                                          {formatMessageTime(msg.createdAt)}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
+                                          {
+                                            msg.message
+                                          }
+                                        </p>
 
-                                    {/* Footer */}
-                                    <div
-                                      className={`mt-1 flex items-center justify-end gap-1.5 whitespace-nowrap text-[10px] ${
-                                        isCurrentUser &&
-                                        !isDeleted
-                                          ? 'text-violet-200'
-                                          : 'text-slate-400 dark:text-slate-500'
-                                      }`}
-                                    >
-                                      {isEdited &&
-                                        !isDeleted && (
-                                          <span className="italic">
-                                            (edited)
-                                          </span>
-                                        )}
+                                        {/* Footer */}
+                                        <div
+                                          className={`mt-1 flex items-center justify-end gap-1.5 whitespace-nowrap text-[10px] ${
+                                            isCurrentUser
+                                              ? 'text-violet-200'
+                                              : 'text-slate-400 dark:text-slate-500'
+                                          }`}
+                                        >
+                                          {isEdited && (
+                                            <span className="italic">
+                                              (edited)
+                                            </span>
+                                          )}
 
-                                      <span>
-                                        {formatMessageTime(
-                                          msg.createdAt
-                                        )}
-                                      </span>
-
-                                      {/* Status Ticks */}
-                                      {isCurrentUser &&
-                                        !isDeleted && (
-                                          <span className="ml-0.5 font-bold">
-                                            {msg.status ===
-                                            'read' ? (
-                                              <span
-                                                className="text-sky-300"
-                                                title="Read"
-                                              >
-                                                ✓✓
-                                              </span>
-                                            ) : msg.status ===
-                                              'delivered' ? (
-                                              <span
-                                                className="text-violet-200"
-                                                title="Delivered"
-                                              >
-                                                ✓✓
-                                              </span>
-                                            ) : (
-                                              <span
-                                                className="text-violet-300"
-                                                title="Sent"
-                                              >
-                                                ✓
-                                              </span>
+                                          <span>
+                                            {formatMessageTime(
+                                              msg.createdAt
                                             )}
                                           </span>
-                                        )}
-                                    </div>
+
+                                          {/* Status Ticks */}
+                                          {isCurrentUser && (
+                                            <span className="ml-0.5 inline-flex items-center">
+                                              {msg.status ===
+                                              'read' ? (
+                                                <span
+                                                  className="text-sky-300"
+                                                  title="Read"
+                                                >
+                                                  <CheckCheck
+                                                    className="h-3.5 w-3.5"
+                                                    aria-hidden="true"
+                                                  />
+                                                </span>
+                                              ) : msg.status ===
+                                                'delivered' ? (
+                                                <span
+                                                  className="text-violet-200"
+                                                  title="Delivered"
+                                                >
+                                                  <CheckCheck
+                                                    className="h-3.5 w-3.5"
+                                                    aria-hidden="true"
+                                                  />
+                                                </span>
+                                              ) : (
+                                                <span
+                                                  className="text-violet-300"
+                                                  title="Sent"
+                                                >
+                                                  <Check
+                                                    className="h-3.5 w-3.5"
+                                                    aria-hidden="true"
+                                                  />
+                                                </span>
+                                              )}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
 
@@ -2317,14 +2396,16 @@ const Dashboard = () => {
 
                         <button
                           type="button"
+                          aria-label="Cancel reply"
+                          title="Cancel reply"
                           onClick={() =>
                             setReplyingTo(
                               null
                             )
                           }
-                          className="ml-2 flex-shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                          className="ml-2 flex-shrink-0 rounded p-0.5 text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:text-slate-200"
                         >
-                          ✕
+                          <X className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
                       </div>
                     )}
@@ -2344,13 +2425,14 @@ const Dashboard = () => {
 
                         <button
                           type="button"
+                          aria-label="Cancel editing"
                           onClick={() => {
                             setEditingMessage(
                               null
                             );
                             setMessage('');
                           }}
-                          className="ml-2 flex-shrink-0 text-amber-600 hover:text-amber-800 dark:text-amber-400"
+                          className="ml-2 flex-shrink-0 text-amber-600 transition hover:text-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400"
                         >
                           Cancel
                         </button>
@@ -2392,12 +2474,15 @@ const Dashboard = () => {
                           !message.trim() ||
                           sending
                         }
-                        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 text-lg text-white shadow-lg shadow-violet-500/20 transition hover:-translate-y-[1px] hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-500/20 transition hover:-translate-y-[1px] hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                         aria-label="Send message"
+                        title="Send message"
                       >
-                        {sending
-                          ? '…'
-                          : '➤'}
+                        {sending ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-white" aria-hidden="true" />
+                        ) : (
+                          <SendHorizontal className="h-4 w-4 text-white" aria-hidden="true" />
+                        )}
                       </button>
                     </form>
                   </div>
@@ -2406,8 +2491,8 @@ const Dashboard = () => {
                 /* Empty Chat State */
                 <div className="flex min-h-0 flex-1 items-center justify-center p-8">
                   <div className="max-w-md rounded-[28px] border border-dashed border-violet-200 bg-white/80 p-8 text-center shadow-sm dark:border-violet-500/20 dark:bg-slate-900/80">
-                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-100 text-2xl dark:bg-violet-500/10">
-                      💬
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-500/10">
+                      <MessageSquare className="h-8 w-8 text-violet-600 dark:text-violet-400" aria-hidden="true" />
                     </div>
 
                     <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100">
@@ -2461,14 +2546,16 @@ const Dashboard = () => {
 
                     <button
                       type="button"
+                      aria-label="Close people panel"
+                      title="Close people panel"
                       onClick={() =>
                         setShowPeoplePanel(
                           false
                         )
                       }
-                      className="rounded-lg p-1 text-slate-400 hover:text-slate-600 lg:hidden dark:hover:text-slate-200"
+                      className="rounded-lg p-1 text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 lg:hidden dark:hover:text-slate-200"
                     >
-                      ✕
+                      <X className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -2477,7 +2564,7 @@ const Dashboard = () => {
                 <div className="mb-4">
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                      ⌕
+                      <Search className="h-4 w-4" aria-hidden="true" />
                     </span>
 
                     <Input

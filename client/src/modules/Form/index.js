@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button";
 import Input from "../../components/input";
 import { useNavigate } from 'react-router-dom';
+import { Sun, Moon, CheckCircle2, ArrowLeft } from 'lucide-react';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://chatterflow.onrender.com';
 
@@ -287,7 +288,9 @@ const Form = ({ isSignInPage = false }) => {
                   <p className="mt-2 text-sm text-violet-100/90">Connect instantly, share ideas quickly, and keep every conversation moving.</p>
                 </div>
                 <div className="flex items-center gap-3 text-sm text-violet-100">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15">✓</span>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15">
+                    <CheckCircle2 className="h-5 w-5 text-violet-100" aria-hidden="true" />
+                  </span>
                   Safe account access
                 </div>
               </div>
@@ -303,11 +306,16 @@ const Form = ({ isSignInPage = false }) => {
                 </div>
                 <button
                   type="button"
-                  aria-label="Toggle color mode"
+                  aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                  title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
                   onClick={() => setDarkMode((prev) => !prev)}
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-violet-200 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
-                  {darkMode ? '☀️' : '🌙'}
+                  {darkMode ? (
+                    <Sun className="h-5 w-5 text-amber-500" aria-hidden="true" />
+                  ) : (
+                    <Moon className="h-5 w-5 text-slate-700 dark:text-slate-200" aria-hidden="true" />
+                  )}
                 </button>
               </div>
 
@@ -398,9 +406,10 @@ const Form = ({ isSignInPage = false }) => {
                     <button
                       type="button"
                       onClick={handleBackToSignup}
-                      className="text-xs font-semibold text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:text-slate-200"
                     >
-                      ← Back to change email or details
+                      <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Back to change email or details</span>
                     </button>
                   </div>
                 </form>
