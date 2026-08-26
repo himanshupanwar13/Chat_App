@@ -8,6 +8,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Ban,
+  Bell,
+  BellOff,
   Check,
   CheckCheck,
   Download,
@@ -26,12 +28,26 @@ import {
   Reply,
   Search,
   SendHorizontal,
+  Settings,
   Sun,
   Trash2,
   UserPlus,
   Users,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
+import {
+  STORAGE_KEY_NOTIFICATIONS,
+  STORAGE_KEY_SOUND,
+  playNotificationSound,
+  unlockAudio,
+  isNotificationSupported,
+  getNotificationPermission,
+  requestNotificationPermission,
+  showDesktopNotification,
+  isUserAway,
+} from '../../utils/notifications';
 
 const EMOJI_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
@@ -195,6 +211,143 @@ const Dashboard = () => {
     setSelectedFile(null);
     setFilePreview(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // --------------------------------------------------
+  // Notification & Sound State
+  // --------------------------------------------------
+
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const stored = localStorage.getItem(STORAGE_KEY_NOTIFICATIONS);
+    return (
+      stored === 'true' &&
+      isNotificationSupported() &&
+      getNotificationPermission() === 'granted'
+    );
+  });
+
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const stored = localStorage.getItem(STORAGE_KEY_SOUND);
+    return stored === null ? true : stored === 'true';
+  });
+
+  const [notificationPermission, setNotificationPermission] = useState(() => {
+    return getNotificationPermission();
+  });
+
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  const notifiedMessageIdsRef = useRef(new Set());
+  const soundEnabledRef = useRef(soundEnabled);
+  const notificationsEnabledRef = useRef(notificationsEnabled);
+  const conversationsRef = useRef(conversations);
+  const fetchMessagesRef = useRef(null);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    notificationsEnabledRef.current = notificationsEnabled;
+  }, [notificationsEnabled]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  // Audio unlock listener for browser autoplay policies
+  useEffect(() => {
+    const handleUserInteraction = () => {
+      unlockAudio();
+    };
+    window.addEventListener('click', handleUserInteraction, { once: true });
+    window.addEventListener('keydown', handleUserInteraction, { once: true });
+    window.addEventListener('touchstart', handleUserInteraction, { once: true });
+    return () => {
+      window.removeEventListener('click', handleUserInteraction);
+      window.removeEventListener('keydown', handleUserInteraction);
+      window.removeEventListener('touchstart', handleUserInteraction);
+    };
+  }, []);
+
+  const handleToggleNotifications = async () => {
+    if (!isNotificationSupported()) {
+      setToast({
+        type: 'error',
+        message: 'Desktop notifications are not supported in this browser.',
+      });
+      return;
+    }
+
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      localStorage.setItem(STORAGE_KEY_NOTIFICATIONS, 'false');
+      setToast({
+        type: 'success',
+        message: 'Desktop notifications disabled.',
+      });
+      return;
+    }
+
+    const currentPerm = getNotificationPermission();
+    if (currentPerm === 'granted') {
+      setNotificationsEnabled(true);
+      setNotificationPermission('granted');
+      localStorage.setItem(STORAGE_KEY_NOTIFICATIONS, 'true');
+      setToast({
+        type: 'success',
+        message: 'Desktop notifications enabled!',
+      });
+      return;
+    }
+
+    if (currentPerm === 'denied') {
+      setNotificationPermission('denied');
+      setToast({
+        type: 'error',
+        message: 'Notifications are blocked. Please allow them in your browser site settings.',
+      });
+      return;
+    }
+
+    // Request permission upon explicit user action
+    const newPerm = await requestNotificationPermission();
+    setNotificationPermission(newPerm);
+
+    if (newPerm === 'granted') {
+      setNotificationsEnabled(true);
+      localStorage.setItem(STORAGE_KEY_NOTIFICATIONS, 'true');
+      setToast({
+        type: 'success',
+        message: 'Desktop notifications enabled!',
+      });
+    } else {
+      setNotificationsEnabled(false);
+      localStorage.setItem(STORAGE_KEY_NOTIFICATIONS, 'false');
+      setToast({
+        type: 'error',
+        message: 'Notification permission was not granted.',
+      });
+    }
+  };
+
+  const handleToggleSound = () => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem(STORAGE_KEY_SOUND, String(next));
+      if (next) {
+        unlockAudio();
+        playNotificationSound();
+      }
+      return next;
+    });
+  };
+
+  const handleTestSound = () => {
+    unlockAudio();
+    playNotificationSound();
   };
 
   // --------------------------------------------------
@@ -453,10 +606,20 @@ const Dashboard = () => {
               String(messages?.conversationId) ===
               String(conv.conversationId);
 
+            const lastMessageText =
+              data.message && String(data.message).trim()
+                ? data.message
+                : Array.isArray(data.attachments) &&
+                  data.attachments.length > 0
+                ? data.attachments[0].type === 'image'
+                  ? '📷 Photo'
+                  : `📄 ${data.attachments[0].fileName || 'Document'}`
+                : data.message || '';
+
             return {
               ...conv,
               lastMessage: {
-                message: data.message,
+                message: lastMessageText,
                 createdAt: data.createdAt || new Date(),
                 senderId: data.senderId,
                 status: isCurrentChat
@@ -472,6 +635,81 @@ const Dashboard = () => {
           return conv;
         });
       });
+
+      // --------------------------------------------------
+      // Notifications & Sound Dispatch
+      // --------------------------------------------------
+      const isOwnMessage =
+        String(data.senderId) === String(user?.id);
+      const isEditOrDelete = Boolean(
+        data.isDeleted || data.isEdited
+      );
+      const msgId = String(data._id || data.id || '');
+
+      if (!isOwnMessage && !isEditOrDelete && msgId) {
+        if (!notifiedMessageIdsRef.current.has(msgId)) {
+          notifiedMessageIdsRef.current.add(msgId);
+          if (notifiedMessageIdsRef.current.size > 100) {
+            const oldestKey =
+              notifiedMessageIdsRef.current.values().next().value;
+            notifiedMessageIdsRef.current.delete(oldestKey);
+          }
+
+          const away = isUserAway(
+            messages?.conversationId,
+            data.conversationId
+          );
+
+          if (away) {
+            if (soundEnabledRef.current) {
+              playNotificationSound();
+            }
+
+            if (
+              notificationsEnabledRef.current &&
+              isNotificationSupported() &&
+              getNotificationPermission() === 'granted'
+            ) {
+              showDesktopNotification(data, {
+                onNotificationClick: (clickedData) => {
+                  const currentConvs =
+                    conversationsRef.current || [];
+                  const foundConv = currentConvs.find(
+                    (c) =>
+                      String(c.conversationId) ===
+                      String(clickedData.conversationId)
+                  );
+                  const convUser =
+                    foundConv?.user || {
+                      receiverId:
+                        clickedData.user?.id ||
+                        clickedData.senderId,
+                      fullName:
+                        clickedData.user?.fullName ||
+                        clickedData.senderName ||
+                        'User',
+                      email:
+                        clickedData.user?.email || '',
+                    };
+
+                  setShowPeoplePanel(false);
+                  setShowMobileSidebar(false);
+
+                  if (
+                    typeof fetchMessagesRef.current ===
+                    'function'
+                  ) {
+                    fetchMessagesRef.current(
+                      clickedData.conversationId,
+                      convUser
+                    );
+                  }
+                },
+              });
+            }
+          }
+        }
+      }
     };
 
     const handleMessageReacted = ({
@@ -917,6 +1155,14 @@ const Dashboard = () => {
   ) => {
     if (!user?.id || !receiver) return;
 
+    const recId = receiver.receiverId || receiver._id || receiver.id;
+    const normalizedReceiver = {
+      receiverId: recId,
+      fullName: receiver.fullName || 'User',
+      email: receiver.email || '',
+      lastSeen: receiver.lastSeen || null,
+    };
+
     try {
       setLoadingMessages(true);
       setReplyingTo(null);
@@ -931,7 +1177,7 @@ const Dashboard = () => {
       prevScrollSnapshotRef.current = null;
 
       const res = await fetch(
-        `${API_BASE_URL}/api/message/${conversationId}?limit=30&senderId=${user.id}&&receiverId=${receiver.receiverId}`,
+        `${API_BASE_URL}/api/message/${conversationId}?limit=30&senderId=${user.id}&receiverId=${recId}`,
         {
           method: 'GET',
           headers: getAuthHeaders(),
@@ -950,7 +1196,7 @@ const Dashboard = () => {
 
       setMessages({
         messages: rawMessages,
-        receiver,
+        receiver: normalizedReceiver,
         conversationId,
       });
       setHasMoreMessages(hasMore);
@@ -970,7 +1216,7 @@ const Dashboard = () => {
       socket?.emit('markAsRead', {
         conversationId,
         readerId: user.id,
-        senderId: receiver.receiverId,
+        senderId: recId,
       });
 
       setConversations((prev) =>
@@ -997,6 +1243,10 @@ const Dashboard = () => {
       setLoadingMessages(false);
     }
   };
+
+  useEffect(() => {
+    fetchMessagesRef.current = fetchMessages;
+  });
 
   // --------------------------------------------------
   // Load Older Messages (Infinite Scroll Up)
@@ -1646,6 +1896,23 @@ const Dashboard = () => {
                       className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 lg:hidden"
                     >
                       <Users className="h-4 w-4" aria-hidden="true" />
+                    </button>
+
+                    <button
+                      type="button"
+                      aria-label="Notification settings"
+                      title="Notification settings"
+                      onClick={() => setShowSettingsModal(true)}
+                      className="relative flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-violet-200 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {notificationsEnabled ? (
+                        <Bell className="h-4 w-4 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+                      ) : (
+                        <BellOff className="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+                      )}
+                      {notificationsEnabled && (
+                        <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-violet-600 ring-2 ring-white dark:ring-slate-800" />
+                      )}
                     </button>
 
                     <button
@@ -3004,6 +3271,202 @@ const Dashboard = () => {
                 alt={lightboxImage.name}
                 className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================
+          SETTINGS MODAL (NOTIFICATIONS & SOUND)
+      ================================================== */}
+
+      {showSettingsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm transition-all animate-fade-in"
+          onClick={() => setShowSettingsModal(false)}
+        >
+          <div
+            className="relative w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-2xl backdrop-blur-xl transition-all dark:border-slate-800 dark:bg-slate-900/95"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-modal-title"
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
+                  <Settings className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2
+                    id="settings-modal-title"
+                    className="text-base font-bold text-slate-800 dark:text-slate-100"
+                  >
+                    Notification Settings
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Manage alerts and sound preferences
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                aria-label="Close settings"
+                title="Close settings"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="mt-5 space-y-4">
+              {/* Desktop Notifications Item */}
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition dark:border-slate-800/80 dark:bg-slate-800/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex gap-3">
+                    <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
+                      {notificationsEnabled ? (
+                        <Bell className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <BellOff className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                          Desktop notifications
+                        </h3>
+                        {notificationPermission === 'denied' ? (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300">
+                            Blocked
+                          </span>
+                        ) : notificationsEnabled ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                            ON
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                            OFF
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Notifications are shown when you're away from a conversation.
+                      </p>
+                      {notificationPermission === 'denied' && (
+                        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                          Permission is blocked by your browser. Please allow notifications in site settings.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleNotifications}
+                    aria-label={
+                      notificationsEnabled
+                        ? 'Disable desktop notifications'
+                        : 'Enable desktop notifications'
+                    }
+                    title={
+                      notificationsEnabled
+                        ? 'Disable desktop notifications'
+                        : 'Enable desktop notifications'
+                    }
+                    className={`flex-shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-semibold shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                      notificationsEnabled
+                        ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+                        : 'bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500'
+                    }`}
+                  >
+                    {notificationsEnabled ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Message Sound Item */}
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition dark:border-slate-800/80 dark:bg-slate-800/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex gap-3">
+                    <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
+                      {soundEnabled ? (
+                        <Volume2 className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <VolumeX className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                          Message sound
+                        </h3>
+                        {soundEnabled ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                            ON
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                            OFF
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Play a sound for new messages.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestSound}
+                      aria-label="Test message sound"
+                      title="Test message sound"
+                      className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-xs transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                    >
+                      Test
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleToggleSound}
+                      aria-label={
+                        soundEnabled
+                          ? 'Disable message sound'
+                          : 'Enable message sound'
+                      }
+                      title={
+                        soundEnabled
+                          ? 'Disable message sound'
+                          : 'Enable message sound'
+                      }
+                      className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                        soundEnabled
+                          ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+                          : 'bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500'
+                      }`}
+                    >
+                      {soundEnabled ? 'Off' : 'On'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>
