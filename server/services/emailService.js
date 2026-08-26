@@ -1,12 +1,20 @@
 function buildOtpEmailTemplate(otp, purpose = 'signup') {
+  const isForgotPassword = purpose === 'forgot-password';
   const purposeText = String(purpose || 'signup').replace(/[-_]/g, ' ');
+  const subject = isForgotPassword
+    ? 'ChatterFlow Password Reset Code'
+    : 'ChatterFlow Verification Code';
+  const heading = isForgotPassword ? 'Reset your password' : 'Verify your email';
+  const subtext = isForgotPassword
+    ? 'Your password reset verification code is:'
+    : 'Your verification code is:';
 
   return {
-    subject: 'ChatterFlow Verification Code',
+    subject,
 
     text: `ChatterFlow
 
-Verify your email for ${purposeText}.
+${isForgotPassword ? 'Reset your password.' : `Verify your email for ${purposeText}.`}
 
 Your verification code is: ${otp}
 
@@ -20,7 +28,7 @@ If you did not request this code, you can safely ignore this email.`,
         <head>
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>ChatterFlow Verification</title>
+          <title>${heading}</title>
         </head>
 
         <body style="margin:0;padding:0;background:#f5f3ff;font-family:Arial,sans-serif;">
@@ -33,11 +41,11 @@ If you did not request this code, you can safely ignore this email.`,
             </div>
 
             <h1 style="margin:0 0 16px;font-size:32px;line-height:1.2;color:#111827;text-align:center;">
-              Verify your email
+              ${heading}
             </h1>
 
             <p style="margin:0 0 24px;font-size:16px;line-height:1.6;color:#4b5563;text-align:center;">
-              Your verification code is:
+              ${subtext}
             </p>
 
             <div style="text-align:center;margin:24px 0;">
@@ -130,6 +138,14 @@ async function sendOtpEmail({ email, otp, purpose = 'signup' }) {
       email,
       ...template,
     });
+  }
+
+  if (provider === 'mock' || provider === 'test' || process.env.NODE_ENV === 'test') {
+    console.log(`[MOCK OTP]: ${otp}`);
+    return {
+      ok: true,
+      messageId: `mock_${Date.now()}`,
+    };
   }
 
   throw new Error(

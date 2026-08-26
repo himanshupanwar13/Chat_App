@@ -2,22 +2,32 @@ import { useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button";
 import Input from "../../components/input";
 import { useNavigate } from 'react-router-dom';
-import { Sun, Moon, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { Sun, Moon, CheckCircle2, ArrowLeft, KeyRound, ShieldCheck } from 'lucide-react';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://chatterflow.onrender.com';
 
-const Form = ({ isSignInPage = false }) => {
+const Form = ({ isSignInPage = false, isForgotPasswordPage = false }) => {
   const [data, setData] = useState({
-    ...(!isSignInPage && { fullName: '' }),
+    ...(!isSignInPage && !isForgotPasswordPage && { fullName: '' }),
     email: '',
     password: '',
   });
+
+  const [resetPasswordData, setResetPasswordData] = useState({
+    newPassword: '',
+    confirmPassword: '',
+  });
+
   const [isOtpStep, setIsOtpStep] = useState(false);
+  const [isNewPasswordStep, setIsNewPasswordStep] = useState(false);
+  const [resetAuthorizationToken, setResetAuthorizationToken] = useState('');
+
   const [otp, setOtp] = useState('');
   const [verificationEmail, setVerificationEmail] = useState('');
   const [resendCooldown, setResendCooldown] = useState(60);
   const [expiryCountdown, setExpiryCountdown] = useState(300);
   const [otpError, setOtpError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
@@ -29,13 +39,17 @@ const Form = ({ isSignInPage = false }) => {
 
   const navigate = useNavigate();
 
-  // Reset OTP step when switching between Sign In and Sign Up
+  // Reset steps and errors when route/mode changes
   useEffect(() => {
     setIsOtpStep(false);
+    setIsNewPasswordStep(false);
+    setResetAuthorizationToken('');
+    setResetPasswordData({ newPassword: '', confirmPassword: '' });
     setOtp('');
     setOtpError('');
+    setPasswordError('');
     setToast(null);
-  }, [isSignInPage]);
+  }, [isSignInPage, isForgotPasswordPage]);
 
   useEffect(() => {
     document.body.classList.toggle('dark', darkMode);
@@ -61,16 +75,26 @@ const Form = ({ isSignInPage = false }) => {
   }, [isOtpStep]);
 
   const headingText = useMemo(() => {
+    if (isForgotPasswordPage) {
+      if (isNewPasswordStep) return 'Create new password';
+      if (isOtpStep) return 'Enter verification code';
+      return 'Reset your password';
+    }
     if (isSignInPage) return 'Welcome back';
     if (isOtpStep) return 'Verify your email';
     return 'Welcome aboard';
-  }, [isSignInPage, isOtpStep]);
+  }, [isSignInPage, isForgotPasswordPage, isOtpStep, isNewPasswordStep]);
 
   const subheadingText = useMemo(() => {
+    if (isForgotPasswordPage) {
+      if (isNewPasswordStep) return 'Your new password must be at least 6 characters long';
+      if (isOtpStep) return 'Enter the 6-digit code sent to your email to verify password reset';
+      return "Enter your registered email address and we'll send you a verification code";
+    }
     if (isSignInPage) return 'Sign in to continue your conversation';
     if (isOtpStep) return 'Enter the 6-digit verification code sent to your email';
     return 'Create your account and start chatting';
-  }, [isSignInPage, isOtpStep]);
+  }, [isSignInPage, isForgotPasswordPage, isOtpStep, isNewPasswordStep]);
 
   const formatExpiryTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -78,6 +102,9 @@ const Form = ({ isSignInPage = false }) => {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
+  // --------------------------------------------------
+  // Sign In / Sign Up Handler
+  // --------------------------------------------------
   const handleRegisterOrLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -136,7 +163,7 @@ const Form = ({ isSignInPage = false }) => {
         return;
       }
 
-      // Handle non-OK status
+      // Handle unverified email login attempt
       if (res.status === 403 && resData.requiresEmailVerification) {
         setVerificationEmail(data.email);
         setIsOtpStep(true);
@@ -160,6 +187,66 @@ const Form = ({ isSignInPage = false }) => {
     }
   };
 
+  // --------------------------------------------------
+  // Step 1: Send Forgot Password OTP
+  // --------------------------------------------------
+  const handleSendForgotPasswordOtp = async (e) => {
+    e.preventDefault();
+    if (!data.email || !data.email.trim()) {
+      setToast({ type: 'error', message: 'Please enter your email address.' });
+      return;
+    }
+
+    setLoading(true);
+    setToast(null);
+    setOtpError('');
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: data.email.trim(),
+          purpose: 'forgot-password',
+        }),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        setVerificationEmail(data.email.trim());
+        setIsOtpStep(true);
+        setIsNewPasswordStep(false);
+        setOtp('');
+        setOtpError('');
+        setResendCooldown(60);
+        setExpiryCountdown(300);
+        setToast({
+          type: 'success',
+          message: resData.message || 'If an account exists, a verification code has been sent.',
+        });
+        return;
+      }
+
+      if (res.status === 429) {
+        setToast({ type: 'error', message: resData?.error || 'Please wait before requesting a new code.' });
+        return;
+      }
+
+      const message = resData?.error || 'Failed to send verification code. Please try again.';
+      setToast({ type: 'error', message });
+    } catch (error) {
+      setToast({ type: 'error', message: 'Unable to reach the server right now. Please try again.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --------------------------------------------------
+  // Step 2: Verify OTP (Signup or Forgot Password)
+  // --------------------------------------------------
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setOtpError('');
@@ -178,6 +265,8 @@ const Form = ({ isSignInPage = false }) => {
     setLoading(true);
     setToast(null);
 
+    const purpose = isForgotPasswordPage ? 'forgot-password' : 'signup';
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
         method: 'POST',
@@ -187,18 +276,31 @@ const Form = ({ isSignInPage = false }) => {
         body: JSON.stringify({
           email: verificationEmail || data.email,
           otp: cleanOtp,
-          purpose: 'signup',
+          purpose,
         }),
       });
 
       const resData = await res.json().catch(() => ({}));
 
       if (res.ok) {
+        if (isForgotPasswordPage) {
+          // Forgot Password Flow -> Transition to Step 3: Set New Password
+          setResetAuthorizationToken(resData.resetAuthorization || '');
+          setIsOtpStep(false);
+          setIsNewPasswordStep(true);
+          setPasswordError('');
+          setToast({
+            type: 'success',
+            message: 'Code verified! Please create your new password.',
+          });
+          return;
+        }
+
+        // Signup flow -> Success, redirect to login
         setToast({
           type: 'success',
           message: resData.message || 'Email verified successfully! You can now log in.',
         });
-        // Success: Redirect to login page
         setTimeout(() => {
           navigate('/users/sign_in');
         }, 1200);
@@ -217,12 +319,17 @@ const Form = ({ isSignInPage = false }) => {
     }
   };
 
+  // --------------------------------------------------
+  // Resend OTP Handler
+  // --------------------------------------------------
   const handleResendOtp = async () => {
     if (resendCooldown > 0 || resending) return;
 
     setResending(true);
     setOtpError('');
     setToast(null);
+
+    const purpose = isForgotPasswordPage ? 'forgot-password' : 'signup';
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
@@ -232,7 +339,7 @@ const Form = ({ isSignInPage = false }) => {
         },
         body: JSON.stringify({
           email: verificationEmail || data.email,
-          purpose: 'signup',
+          purpose,
         }),
       });
 
@@ -261,10 +368,80 @@ const Form = ({ isSignInPage = false }) => {
     }
   };
 
-  const handleBackToSignup = () => {
+  // --------------------------------------------------
+  // Step 3: Set New Password Handler
+  // --------------------------------------------------
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setPasswordError('');
+
+    const { newPassword, confirmPassword } = resetPasswordData;
+
+    if (!newPassword || newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+
+    if (!resetAuthorizationToken) {
+      setPasswordError('Reset authorization is missing or expired. Please start over.');
+      return;
+    }
+
+    setLoading(true);
+    setToast(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: verificationEmail || data.email,
+          resetAuthorization: resetAuthorizationToken,
+          newPassword,
+          confirmPassword,
+        }),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        setToast({
+          type: 'success',
+          message: resData.message || 'Password reset successfully! Redirecting to login...',
+        });
+        setResetAuthorizationToken('');
+        setResetPasswordData({ newPassword: '', confirmPassword: '' });
+        setTimeout(() => {
+          navigate('/users/sign_in');
+        }, 1500);
+        return;
+      }
+
+      const message = resData?.error || 'Failed to reset password. Please try again.';
+      setPasswordError(message);
+      setToast({ type: 'error', message });
+    } catch (error) {
+      const message = 'Unable to reach the server right now. Please try again.';
+      setPasswordError(message);
+      setToast({ type: 'error', message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBackToEmailStep = () => {
     setIsOtpStep(false);
+    setIsNewPasswordStep(false);
     setOtp('');
     setOtpError('');
+    setPasswordError('');
     setToast(null);
   };
 
@@ -273,6 +450,8 @@ const Form = ({ isSignInPage = false }) => {
       <div className="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-4 py-10">
         <div className="grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/40 bg-white/75 shadow-soft backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80">
           <div className="grid md:grid-cols-[1.1fr_0.9fr]">
+
+            {/* Left Brand Panel */}
             <div className="relative hidden overflow-hidden bg-gradient-to-br from-violet-700 via-indigo-700 to-purple-900 p-10 text-white md:flex md:flex-col md:justify-between">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18),_transparent_35%)]" />
               <div className="relative z-10">
@@ -289,18 +468,23 @@ const Form = ({ isSignInPage = false }) => {
                 </div>
                 <div className="flex items-center gap-3 text-sm text-violet-100">
                   <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15">
-                    <CheckCircle2 className="h-5 w-5 text-violet-100" aria-hidden="true" />
+                    {isForgotPasswordPage ? (
+                      <KeyRound className="h-5 w-5 text-violet-100" aria-hidden="true" />
+                    ) : (
+                      <CheckCircle2 className="h-5 w-5 text-violet-100" aria-hidden="true" />
+                    )}
                   </span>
-                  Safe account access
+                  {isForgotPasswordPage ? 'Secure password recovery' : 'Safe account access'}
                 </div>
               </div>
             </div>
 
+            {/* Right Form Container */}
             <div className="p-6 sm:p-8 lg:p-12">
               <div className="mb-8 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
-                    {isOtpStep ? 'Security' : 'Access'}
+                    {isForgotPasswordPage ? 'Recovery' : isOtpStep ? 'Security' : 'Access'}
                   </p>
                   <h2 className="mt-2 text-3xl font-semibold text-slate-800 dark:text-white">{headingText}</h2>
                 </div>
@@ -323,12 +507,81 @@ const Form = ({ isSignInPage = false }) => {
                 {subheadingText}
               </p>
 
-              {isOtpStep ? (
-                /* OTP Verification Step */
+              {/* ==================================================
+                  CASE 1: Step 3 - Set New Password Form
+              ================================================== */}
+              {isForgotPasswordPage && isNewPasswordStep ? (
+                <form className="space-y-5" onSubmit={handleResetPassword}>
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/30">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                        Identity Verified
+                      </p>
+                    </div>
+                    <p className="mt-1 break-all text-sm font-medium text-slate-800 dark:text-slate-200">
+                      {verificationEmail || data.email}
+                    </p>
+                  </div>
+
+                  <Input
+                    label="New Password"
+                    name="newPassword"
+                    placeholder="Enter new password (min. 6 characters)"
+                    type="password"
+                    value={resetPasswordData.newPassword}
+                    autoComplete="new-password"
+                    onChange={(e) => {
+                      setResetPasswordData({ ...resetPasswordData, newPassword: e.target.value });
+                      if (passwordError) setPasswordError('');
+                    }}
+                  />
+
+                  <Input
+                    label="Confirm New Password"
+                    name="confirmPassword"
+                    placeholder="Re-enter your new password"
+                    type="password"
+                    value={resetPasswordData.confirmPassword}
+                    autoComplete="new-password"
+                    onChange={(e) => {
+                      setResetPasswordData({ ...resetPasswordData, confirmPassword: e.target.value });
+                      if (passwordError) setPasswordError('');
+                    }}
+                  />
+
+                  {passwordError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-500/30 dark:bg-red-950/50 dark:text-red-300">
+                      {passwordError}
+                    </div>
+                  )}
+
+                  <Button
+                    type="submit"
+                    label={loading ? 'Resetting password...' : 'Reset Password'}
+                    className="mt-2 w-full"
+                    disabled={loading || !resetPasswordData.newPassword || !resetPasswordData.confirmPassword}
+                  />
+
+                  <div className="pt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/users/sign_in')}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:text-slate-200"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Cancel and return to Log in</span>
+                    </button>
+                  </div>
+                </form>
+              ) : isOtpStep ? (
+                /* ==================================================
+                    CASE 2: Step 2 - OTP Verification (Signup or Reset)
+                ================================================== */
                 <form className="space-y-5" onSubmit={handleVerifyOtp}>
                   <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-4 dark:border-violet-900/40 dark:bg-violet-950/30">
                     <p className="text-xs font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
-                      Verifying Account
+                      {isForgotPasswordPage ? 'Resetting Password For' : 'Verifying Account'}
                     </p>
                     <p className="mt-1 break-all text-sm font-medium text-slate-800 dark:text-slate-200">
                       {verificationEmail || data.email}
@@ -397,7 +650,7 @@ const Form = ({ isSignInPage = false }) => {
 
                   <Button
                     type="submit"
-                    label={loading ? 'Verifying code...' : 'Verify & Complete Signup'}
+                    label={loading ? 'Verifying code...' : isForgotPasswordPage ? 'Verify & Continue' : 'Verify & Complete Signup'}
                     className="mt-2 w-full"
                     disabled={loading || otp.length !== 6 || expiryCountdown === 0}
                   />
@@ -405,16 +658,51 @@ const Form = ({ isSignInPage = false }) => {
                   <div className="pt-2 text-center">
                     <button
                       type="button"
-                      onClick={handleBackToSignup}
+                      onClick={handleBackToEmailStep}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:text-slate-200"
                     >
                       <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Back to change email or details</span>
+                      <span>{isForgotPasswordPage ? 'Back to change email' : 'Back to change details'}</span>
+                    </button>
+                  </div>
+                </form>
+              ) : isForgotPasswordPage ? (
+                /* ==================================================
+                    CASE 3: Step 1 - Forgot Password (Email Entry)
+                ================================================== */
+                <form className="space-y-5" onSubmit={handleSendForgotPasswordOtp}>
+                  <Input
+                    label="Email address"
+                    name="email"
+                    placeholder="name@example.com"
+                    type="email"
+                    value={data.email}
+                    autoComplete="email"
+                    onChange={(e) => setData({ ...data, email: e.target.value })}
+                  />
+
+                  <Button
+                    type="submit"
+                    label={loading ? 'Sending code...' : 'Send Verification Code'}
+                    className="mt-2 w-full"
+                    disabled={loading || !data.email.trim()}
+                  />
+
+                  <div className="pt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/users/sign_in')}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:text-slate-200"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Back to Log in</span>
                     </button>
                   </div>
                 </form>
               ) : (
-                /* Standard Login or Registration Form */
+                /* ==================================================
+                    CASE 4: Standard Sign In or Registration Form
+                ================================================== */
                 <form className="space-y-5" onSubmit={handleRegisterOrLogin}>
                   {!isSignInPage && (
                     <Input
@@ -444,6 +732,17 @@ const Form = ({ isSignInPage = false }) => {
                     type="password"
                     value={data.password}
                     autoComplete={isSignInPage ? 'current-password' : 'new-password'}
+                    rightLabel={
+                      isSignInPage ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate('/users/forgot_password')}
+                          className="text-xs font-semibold text-violet-600 transition hover:text-violet-500 dark:text-violet-400"
+                        >
+                          Forgot Password?
+                        </button>
+                      ) : null
+                    }
                     onChange={(e) => setData({ ...data, password: e.target.value })}
                   />
 
@@ -464,7 +763,7 @@ const Form = ({ isSignInPage = false }) => {
                 </form>
               )}
 
-              {!isOtpStep && (
+              {!isOtpStep && !isForgotPasswordPage && (
                 <div className="mt-8 flex items-center justify-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                   <span>{isSignInPage ? "Don't have an account?" : 'Already have an account?'}</span>
                   <button

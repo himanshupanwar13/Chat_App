@@ -1,5 +1,6 @@
 const Input = ({
   label = '',
+  rightLabel = null,
   name = '',
   type = 'text',
   className = '',
@@ -12,13 +13,18 @@ const Input = ({
 }) => {
   return (
     <div className="w-full">
-      {label && (
-        <label
-          htmlFor={name}
-          className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200"
-        >
-          {label}
-        </label>
+      {(label || rightLabel) && (
+        <div className="mb-2 flex items-center justify-between">
+          {label && (
+            <label
+              htmlFor={name}
+              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
+            >
+              {label}
+            </label>
+          )}
+          {rightLabel}
+        </div>
       )}
       <input
         type={type}

@@ -201,6 +201,64 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     await user.save(); return res.status(200).json({ message: 'OTP verified successfully', resetAuthorization: createResetAuthorizationToken(user), expiresIn: 600 });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { email, resetAuthorization, newPassword, confirmPassword } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+
+    if (!normalizedEmail || !resetAuthorization || !newPassword) {
+      return res.status(400).json({ error: 'Please provide all required fields.' });
+    }
+
+    if (confirmPassword !== undefined && newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Passwords do not match.' });
+    }
+
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+    }
+
+    let payload;
+    try {
+      payload = verifyJwt(resetAuthorization);
+    } catch (err) {
+      return res.status(401).json({ error: 'Invalid or expired password reset token. Please request a new code.' });
+    }
+
+    if (!payload?.userId || payload?.purpose !== 'forgot-password-reset') {
+      return res.status(401).json({ error: 'Invalid reset authorization token.' });
+    }
+
+    if (normalizeEmail(payload.email) !== normalizedEmail) {
+      return res.status(400).json({ error: 'Email does not match reset authorization.' });
+    }
+
+    const user = await Users.findById(payload.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    if (user.passwordResetAt) {
+      const resetTime = new Date(user.passwordResetAt).getTime();
+      const tokenIssuedAt = (payload.iat || 0) * 1000;
+      if (tokenIssuedAt <= resetTime) {
+        return res.status(401).json({ error: 'This reset token has already been used. Please request a new code.' });
+      }
+    }
+
+    const hashedPassword = await bcryptjs.hash(newPassword, 10);
+    user.password = hashedPassword;
+    user.passwordResetAt = new Date();
+    user.token = null;
+    clearOtpState(user);
+    await user.save();
+
+    return res.status(200).json({ message: 'Password reset successfully. You can now log in with your new password.' });
+  } catch (error) {
+    console.error('Password reset error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
 
 app.post('/api/conversation', requireAuth, async (req, res) => {
   try { const receiver = await getVerifiedRecipient(req.body.receiverId, req.auth.userId); if (!receiver) return res.status(400).json({ error: 'A verified recipient is required.' }); const conversation = await getOrCreateDirectConversation(req.auth.userId, receiver._id); return res.status(200).json({ conversationId: conversation._id }); }

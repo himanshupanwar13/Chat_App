@@ -40,6 +40,14 @@ function App() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path='/users/forgot_password'
+        element={
+          <ProtectedRoute>
+            <Form isForgotPasswordPage={true} />
+          </ProtectedRoute>
+        }
+      />
     </Routes>
   );
 }

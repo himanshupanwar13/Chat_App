@@ -54,6 +54,10 @@ const userSchema = mongoose.Schema({
         type: Date,
         default: Date.now,
     },
+    passwordResetAt: {
+        type: Date,
+        default: null,
+    },
 }, { timestamps: true });
 
 userSchema.pre('validate', function normalizeUserEmail(next) {
