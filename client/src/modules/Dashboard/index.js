@@ -704,17 +704,32 @@ const Dashboard = () => {
   // --------------------------------------------------
 
   useEffect(() => {
+    const token = localStorage.getItem('user:token') || '';
+    if (!token) return undefined;
+
     const newSocket = io(SOCKET_URL, {
-      auth: {
-        token: localStorage.getItem('user:token') || '',
-      },
+      auth: { token },
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+      transports: ['websocket', 'polling'],
+    });
+
+    newSocket.on('connect', () => {
+      if (user?.id) {
+        newSocket.emit('addUser', user.id);
+      }
+    });
+
+    newSocket.on('reconnect', () => {
+      if (user?.id) {
+        newSocket.emit('addUser', user.id);
+      }
     });
 
     setSocket(newSocket);
-
-    if (user?.id) {
-      newSocket.emit('addUser', user.id);
-    }
 
     return () => {
       newSocket.disconnect();

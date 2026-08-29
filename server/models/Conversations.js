@@ -15,6 +15,7 @@ const conversationSchema = mongoose.Schema({
 }, { timestamps: true });
 
 conversationSchema.index({ members: 1 }, { name: 'conversation_members' });
+conversationSchema.index({ members: 1, updatedAt: -1 }, { name: 'conversation_members_updated' });
 conversationSchema.index({ memberKey: 1 }, { unique: true, sparse: true, name: 'unique_direct_conversation' });
 
 const Conversation = mongoose.model('Conversation', conversationSchema);

@@ -80,6 +80,7 @@ userSchema.pre('validate', function normalizeUserEmail(next) {
 });
 
 userSchema.index({ emailNormalized: 1 }, { unique: true, sparse: true, name: 'unique_normalized_email' });
+userSchema.index({ emailVerified: 1, _id: 1 }, { name: 'users_directory_index' });
 
 const Users = mongoose.model('User', userSchema);
 

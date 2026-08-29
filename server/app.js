@@ -6,6 +6,8 @@ const multer = require('multer');
 const bcryptjs = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const http = require('http');
 const mongoose = require('mongoose');
 const { sendOtpEmail } = require('./services/emailService');
@@ -17,20 +19,57 @@ getJwtSecret();
 const app = express();
 const server = http.createServer(app);
 const port = process.env.PORT || 8000;
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'https://chatterflow.tech',
-  'https://www.chatterflow.tech',
-  'https://chatterflow.vercel.app',
-  process.env.CLIENT_URL?.replace(/\/$/, ''),
-].filter(Boolean);
-const io = require('socket.io')(server, { cors: { origin: allowedOrigins, methods: ['GET', 'POST'] } });
+
+const parseAllowedOrigins = () => {
+  const defaults = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://chatterflow.tech',
+    'https://www.chatterflow.tech',
+    'https://chatterflow.vercel.app',
+  ];
+  const custom = (process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+
+  return Array.from(new Set([...defaults, ...custom]));
+};
+
+const allowedOrigins = parseAllowedOrigins();
+
+const io = require('socket.io')(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  pingTimeout: 20000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling'],
+});
 
 require('./db/connection');
 const Users = require('./models/users');
 const Conversations = require('./models/Conversations');
 const Messages = require('./models/Messages');
+
+// ==========================================
+// RATE LIMITERS
+// ==========================================
+const createLimiter = (max, windowMs, message) => rateLimit({
+  windowMs,
+  max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: message || 'Too many requests, please try again later.' },
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
+const apiLimiter = createLimiter(600, 15 * 60 * 1000, 'Too many requests from this IP. Please try again in 15 minutes.');
+const authLimiter = createLimiter(30, 15 * 60 * 1000, 'Too many authentication attempts. Please try again in 15 minutes.');
+const uploadLimiter = createLimiter(40, 15 * 60 * 1000, 'Upload rate limit exceeded. Please try again later.');
+const passwordLimiter = createLimiter(15, 15 * 60 * 1000, 'Too many password update attempts. Please try again later.');
 
 const OTP_EXPIRY_MS = 5 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
@@ -114,10 +153,31 @@ const requireSocketConversationMember = async (socket, conversationId, receiverI
   return { conversation, otherMemberId };
 };
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: false,
+  })
+);
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(cors({ origin: allowedOrigins, methods: ['GET', 'POST', 'PUT', 'DELETE'], allowedHeaders: ['Content-Type', 'Authorization'] }));
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    return callback(new Error(`Origin ${origin} not allowed by CORS policy.`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+app.use(cors(corsOptions));
+app.use('/api', apiLimiter);
 
 io.use(async (socket, next) => {
   try {
@@ -179,7 +239,7 @@ io.on('connection', (socket) => {
 });
 
 app.get('/', (req, res) => res.send('Welcome'));
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', authLimiter, async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
     if (!fullName || !email || !password) return res.status(400).json({ error: 'Please fill all required fields!' });
@@ -194,7 +254,7 @@ app.post('/api/register', async (req, res) => {
     return res.status(200).json({ message: 'Registration successful. Verify your email with OTP.', requiresEmailVerification: true, email: normalizedEmail });
   } catch (error) { if (error?.code === 11000) return res.status(409).json({ error: 'User already exists' }); console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body; if (!email || !password) return res.status(400).json({ error: 'Please fill all required fields!' });
     const user = await findUserByNormalizedEmail(email);
@@ -203,7 +263,7 @@ app.post('/api/login', async (req, res) => {
     const token = createJwtToken(user); user.token = token; await user.save(); return res.status(200).json({ user: standardUserResponse(user), token });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-app.post('/api/auth/send-otp', async (req, res) => {
+app.post('/api/auth/send-otp', authLimiter, async (req, res) => {
   try {
     const { email, purpose } = req.body || {}; const normalizedEmail = normalizeEmail(email);
     if (!normalizedEmail || !OTP_PURPOSES.has(purpose)) return res.status(400).json({ error: 'Invalid request.' });
@@ -215,7 +275,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
     return res.status(200).json({ message: 'OTP sent successfully' });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-app.post('/api/auth/verify-otp', async (req, res) => {
+app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
   try {
     const { email, otp, purpose } = req.body || {};
     if (!normalizeEmail(email) || !/^\d{6}$/.test(String(otp || '')) || !OTP_PURPOSES.has(purpose)) return res.status(400).json({ error: 'Invalid request.' });
@@ -229,7 +289,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     await user.save(); return res.status(200).json({ message: 'OTP verified successfully', resetAuthorization: createResetAuthorizationToken(user), expiresIn: 600 });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
-app.post('/api/auth/reset-password', async (req, res) => {
+app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
   try {
     const { email, resetAuthorization, newPassword, confirmPassword } = req.body || {};
     const normalizedEmail = normalizeEmail(email);
@@ -351,7 +411,7 @@ app.put('/api/profile', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/profile/avatar', requireAuth, (req, res, next) => {
+app.post('/api/profile/avatar', requireAuth, uploadLimiter, (req, res, next) => {
   avatarUpload.single('avatar')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -439,7 +499,7 @@ app.delete('/api/profile/avatar', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/profile/password', requireAuth, async (req, res) => {
+app.put('/api/profile/password', requireAuth, passwordLimiter, async (req, res) => {
   try {
     const { currentPassword, newPassword, confirmPassword } = req.body || {};
 
@@ -491,7 +551,7 @@ const formatLastMessageText = (msg) => {
   return '';
 };
 
-app.post('/api/upload', requireAuth, (req, res, next) => {
+app.post('/api/upload', requireAuth, uploadLimiter, (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -676,6 +736,34 @@ app.post('/api/message/read', requireAuth, async (req, res) => {
 app.get('/api/users/:userId', requireAuth, async (req, res) => {
   try { if (toIdString(req.params.userId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized.' }); const users = await Users.find({ _id: { $ne: req.auth.userId }, emailVerified: true }).select('_id email fullName avatar lastSeen updatedAt'); return res.status(200).json(users.map((user) => ({ user: { email: user.email, fullName: user.fullName, receiverId: user._id, avatar: user.avatar || null, lastSeen: user.lastSeen || user.updatedAt || null } }))); }
   catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
+});
+
+// ==========================================
+// 404 & ERROR HANDLING MIDDLEWARE
+// ==========================================
+
+// Handle unmatched API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ error: `API endpoint '${req.originalUrl}' not found.` });
+});
+
+// Centralized Express error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err);
+  const status = err.statusCode || err.status || 500;
+  const message = process.env.NODE_ENV === 'production' && status === 500
+    ? 'Internal server error.'
+    : (err.message || 'Server error.');
+  res.status(status).json({ error: message });
+});
+
+// Process-level unhandled rejection / exception guards
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
 });
 
 server.listen(port, () => console.log(`Listening on Port ${port}`));
