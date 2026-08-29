@@ -90,6 +90,12 @@ const formatFileSize = (bytes) => {
 const Dashboard = () => {
   const navigate = useNavigate();
 
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('user:token');
+    localStorage.removeItem('user:detail');
+    navigate('/users/sign_in');
+  }, [navigate]);
+
   const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('user:detail') || '{}');
@@ -397,6 +403,10 @@ const Dashboard = () => {
       const res = await fetch(`${API_BASE_URL}/api/profile`, {
         headers: getAuthHeaders(),
       });
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setUser((prev) => {
@@ -417,7 +427,7 @@ const Dashboard = () => {
     } catch (err) {
       console.error('Failed to sync profile:', err);
     }
-  }, []);
+  }, [handleLogout]);
 
   useEffect(() => {
     fetchUserProfile();
@@ -1308,6 +1318,11 @@ const Dashboard = () => {
           }
         );
 
+        if (res.status === 401) {
+          handleLogout();
+          return;
+        }
+
         if (!res.ok) {
           throw new Error(
             'Failed to fetch conversations'
@@ -1326,7 +1341,7 @@ const Dashboard = () => {
       } finally {
         setLoadingConversations(false);
       }
-    }, [user?.id]);
+    }, [user?.id, handleLogout]);
 
   useEffect(() => {
     fetchConversationsList();
@@ -1351,6 +1366,11 @@ const Dashboard = () => {
           }
         );
 
+        if (res.status === 401) {
+          handleLogout();
+          return;
+        }
+
         if (!res.ok) {
           throw new Error(
             'Failed to fetch users'
@@ -1372,7 +1392,7 @@ const Dashboard = () => {
     };
 
     fetchUsers();
-  }, [user?.id]);
+  }, [user?.id, handleLogout]);
 
   // --------------------------------------------------
   // Auto-scroll & Pagination Scroll Adjustment
@@ -1584,6 +1604,11 @@ const Dashboard = () => {
           headers: getAuthHeaders(),
         }
       );
+
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
 
       if (!res.ok) {
         throw new Error(
@@ -2213,22 +2238,6 @@ const Dashboard = () => {
     if (inputRef.current) {
       inputRef.current.focus();
     }
-  };
-
-  // --------------------------------------------------
-  // Logout
-  // --------------------------------------------------
-
-  const handleLogout = () => {
-    localStorage.removeItem(
-      'user:token'
-    );
-
-    localStorage.removeItem(
-      'user:detail'
-    );
-
-    navigate('/users/sign_in');
   };
 
   const conversationCount =
