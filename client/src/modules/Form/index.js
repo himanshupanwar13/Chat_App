@@ -3,8 +3,7 @@ import Button from "../../components/Button";
 import Input from "../../components/input";
 import { useNavigate } from 'react-router-dom';
 import { Sun, Moon, CheckCircle2, ArrowLeft, KeyRound, ShieldCheck } from 'lucide-react';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://chatterflow.onrender.com';
+import { API_BASE_URL } from '../../config';
 
 const Form = ({ isSignInPage = false, isForgotPasswordPage = false }) => {
   const [data, setData] = useState({
