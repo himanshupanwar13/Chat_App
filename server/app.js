@@ -106,10 +106,12 @@ const findUserByNormalizedEmail = (email) => {
 };
 const getVerifiedRecipient = async (receiverId, senderId) => {
   if (!receiverId || toIdString(receiverId) === toIdString(senderId)) return null;
+  if (!mongoose.Types.ObjectId.isValid(receiverId)) return null;
   return Users.findOne({ _id: receiverId, emailVerified: true }).select('_id email fullName avatar lastSeen updatedAt');
 };
 const requireConversationMember = async (conversationId, userId) => {
   if (!conversationId || conversationId === 'new') return null;
+  if (!mongoose.Types.ObjectId.isValid(conversationId)) return null;
   const conversation = await Conversations.findById(conversationId);
   return conversation && isConversationMember(conversation, userId) ? conversation : null;
 };
