@@ -163,11 +163,106 @@ async function processAttachmentUpload({ buffer, originalName, mimeType, size, c
   });
 }
 
+const AVATAR_ALLOWED_MIME_TYPES = {
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/webp': ['.webp'],
+  'image/gif': ['.gif'],
+};
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // 5 MB
+
+function validateAvatarFile({ originalName, mimeType, size }) {
+  const normalizedMime = String(mimeType || '').toLowerCase();
+  const allowedExts = AVATAR_ALLOWED_MIME_TYPES[normalizedMime];
+
+  if (!allowedExts) {
+    return { valid: false, error: 'Avatar must be an image (JPEG, PNG, WebP, or GIF).' };
+  }
+
+  const ext = path.extname(originalName || '').toLowerCase();
+  if (!allowedExts.includes(ext)) {
+    return { valid: false, error: `File extension '${ext}' does not match content type '${mimeType}'.` };
+  }
+
+  if (size > MAX_AVATAR_SIZE) {
+    return { valid: false, error: 'Image must be 5 MB or smaller.' };
+  }
+
+  return { valid: true };
+}
+
+async function deleteCloudinaryAsset(publicId, resourceType = 'image') {
+  if (!publicId || !isCloudinaryConfigured()) return;
+  try {
+    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
+  } catch (error) {
+    console.error('Cloudinary asset deletion error (non-fatal):', error);
+  }
+}
+
+async function processAvatarUpload({ buffer, originalName, mimeType, size, userId }) {
+  const validation = validateAvatarFile({ originalName, mimeType, size });
+  if (!validation.valid) {
+    const err = new Error(validation.error);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const safeName = sanitizeFileName(originalName);
+
+  if (isCloudinaryConfigured()) {
+    const folder = `chatterflow/avatars/${userId || 'general'}`;
+    const options = {
+      folder,
+      resource_type: 'image',
+      public_id: `${crypto.randomUUID()}_${path.parse(safeName).name}`,
+      use_filename: false,
+      unique_filename: true,
+      overwrite: false,
+    };
+
+    const result = await uploadToCloudinary(buffer, options);
+
+    return {
+      url: result.secure_url || result.url,
+      publicId: result.public_id,
+    };
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    const err = new Error('Cloud storage service (Cloudinary) is not configured on the server.');
+    err.statusCode = 500;
+    throw err;
+  }
+
+  // Fallback to local storage in development
+  const uploadDir = path.join(__dirname, '..', 'uploads', 'avatars', userId || 'general');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const uniqueId = crypto.randomUUID();
+  const storageFileName = `${uniqueId}-${safeName}`;
+  const filePath = path.join(uploadDir, storageFileName);
+
+  await fs.promises.writeFile(filePath, buffer);
+
+  return {
+    url: `/uploads/avatars/${userId || 'general'}/${storageFileName}`,
+    publicId: null,
+  };
+}
+
 module.exports = {
   validateFile,
   processAttachmentUpload,
+  validateAvatarFile,
+  processAvatarUpload,
+  deleteCloudinaryAsset,
   sanitizeFileName,
   ALLOWED_MIME_TYPES,
+  AVATAR_ALLOWED_MIME_TYPES,
   MAX_IMAGE_SIZE,
   MAX_FILE_SIZE,
+  MAX_AVATAR_SIZE,
 };

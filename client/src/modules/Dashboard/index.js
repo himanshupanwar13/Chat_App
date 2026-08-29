@@ -1,5 +1,4 @@
-import Avatar from '../../assets/avatar.svg';
-import img1 from '../../assets/img1.svg';
+import Avatar from '../../components/Avatar';
 import Input from '../../components/input';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
@@ -10,17 +9,22 @@ import {
   Ban,
   Bell,
   BellOff,
+  Camera,
   Check,
   CheckCheck,
+  CheckCircle2,
   Download,
   File,
   FileArchive,
   FileSpreadsheet,
   FileText,
+  KeyRound,
   Loader2,
+  Lock,
   LogOut,
   MessageSquare,
   Moon,
+  Palette,
   Paperclip,
   Pencil,
   Pin,
@@ -29,8 +33,11 @@ import {
   Search,
   SendHorizontal,
   Settings,
+  Shield,
   Sun,
   Trash2,
+  Upload,
+  User,
   UserPlus,
   Users,
   Volume2,
@@ -83,7 +90,7 @@ const formatFileSize = (bytes) => {
 const Dashboard = () => {
   const navigate = useNavigate();
 
-  const [user] = useState(() => {
+  const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('user:detail') || '{}');
     } catch (error) {
@@ -348,6 +355,312 @@ const Dashboard = () => {
   const handleTestSound = () => {
     unlockAudio();
     playNotificationSound();
+  };
+
+  // --------------------------------------------------
+  // Profile & Settings State
+  // --------------------------------------------------
+
+  const [settingsTab, setSettingsTab] = useState('profile'); // 'profile' | 'notifications' | 'appearance' | 'security' | 'account'
+  const [displayNameInput, setDisplayNameInput] = useState(() => user?.fullName || '');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [removingAvatar, setRemovingAvatar] = useState(false);
+  const avatarInputRef = useRef(null);
+
+  // Security / Password State
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  useEffect(() => {
+    if (user?.fullName) {
+      setDisplayNameInput(user.fullName);
+    }
+  }, [user?.fullName]);
+
+  useEffect(() => {
+    return () => {
+      if (avatarPreview && avatarPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+    };
+  }, [avatarPreview]);
+
+  const fetchUserProfile = useCallback(async () => {
+    const token = localStorage.getItem('user:token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profile`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUser((prev) => {
+          const updated = {
+            ...prev,
+            id: data._id || data.id,
+            fullName: data.fullName,
+            email: data.email,
+            avatar: data.avatar,
+            emailVerified: data.emailVerified,
+            createdAt: data.createdAt,
+          };
+          localStorage.setItem('user:detail', JSON.stringify(updated));
+          return updated;
+        });
+        setDisplayNameInput(data.fullName || '');
+      }
+    } catch (err) {
+      console.error('Failed to sync profile:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUserProfile();
+  }, [fetchUserProfile]);
+
+  const handleAvatarSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!validTypes.includes(file.type)) {
+      setToast({
+        type: 'error',
+        message: 'Avatar must be an image (JPEG, PNG, WebP, or GIF).',
+      });
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setToast({
+        type: 'error',
+        message: 'Image must be 5 MB or smaller.',
+      });
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      return;
+    }
+
+    if (avatarPreview && avatarPreview.startsWith('blob:')) {
+      URL.revokeObjectURL(avatarPreview);
+    }
+
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+    if (avatarInputRef.current) avatarInputRef.current.value = '';
+  };
+
+  const handleCancelAvatarPreview = () => {
+    if (avatarPreview && avatarPreview.startsWith('blob:')) {
+      URL.revokeObjectURL(avatarPreview);
+    }
+    setAvatarFile(null);
+    setAvatarPreview(null);
+    if (avatarInputRef.current) avatarInputRef.current.value = '';
+  };
+
+  const handleUploadAvatar = async () => {
+    if (!avatarFile) return;
+    const token = localStorage.getItem('user:token');
+    if (!token) return;
+
+    try {
+      setUploadingAvatar(true);
+      const formData = new FormData();
+      formData.append('avatar', avatarFile);
+
+      const res = await fetch(`${API_BASE_URL}/api/profile/avatar`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to upload avatar.');
+      }
+
+      setUser((prev) => {
+        const next = { ...prev, avatar: data.avatar };
+        localStorage.setItem('user:detail', JSON.stringify(next));
+        return next;
+      });
+
+      handleCancelAvatarPreview();
+      setToast({
+        type: 'success',
+        message: 'Profile photo updated successfully!',
+      });
+    } catch (err) {
+      setToast({
+        type: 'error',
+        message: err.message || 'Failed to upload avatar.',
+      });
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    const token = localStorage.getItem('user:token');
+    if (!token) return;
+
+    try {
+      setRemovingAvatar(true);
+      const res = await fetch(`${API_BASE_URL}/api/profile/avatar`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to remove avatar.');
+      }
+
+      setUser((prev) => {
+        const next = { ...prev, avatar: null };
+        localStorage.setItem('user:detail', JSON.stringify(next));
+        return next;
+      });
+
+      handleCancelAvatarPreview();
+      setToast({
+        type: 'success',
+        message: 'Profile photo removed successfully.',
+      });
+    } catch (err) {
+      setToast({
+        type: 'error',
+        message: err.message || 'Failed to remove avatar.',
+      });
+    } finally {
+      setRemovingAvatar(false);
+    }
+  };
+
+  const handleSaveDisplayName = async (e) => {
+    if (e) e.preventDefault();
+    const trimmed = displayNameInput.trim();
+    if (!trimmed || trimmed.length < 2 || trimmed.length > 50) {
+      setToast({
+        type: 'error',
+        message: 'Full name must be between 2 and 50 characters.',
+      });
+      return;
+    }
+
+    const token = localStorage.getItem('user:token');
+    if (!token) return;
+
+    try {
+      setSavingProfile(true);
+      const res = await fetch(`${API_BASE_URL}/api/profile`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ fullName: trimmed }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update profile.');
+      }
+
+      setUser((prev) => {
+        const next = { ...prev, fullName: trimmed };
+        localStorage.setItem('user:detail', JSON.stringify(next));
+        return next;
+      });
+
+      setToast({
+        type: 'success',
+        message: 'Profile name updated successfully!',
+      });
+    } catch (err) {
+      setToast({
+        type: 'error',
+        message: err.message || 'Failed to update profile.',
+      });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    if (e) e.preventDefault();
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setToast({
+        type: 'error',
+        message: 'Please fill in all password fields.',
+      });
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setToast({
+        type: 'error',
+        message: 'New password must be at least 6 characters long.',
+      });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setToast({
+        type: 'error',
+        message: 'New password and confirmation do not match.',
+      });
+      return;
+    }
+
+    if (currentPassword === newPassword) {
+      setToast({
+        type: 'error',
+        message: 'New password must be different from current password.',
+      });
+      return;
+    }
+
+    const token = localStorage.getItem('user:token');
+    if (!token) return;
+
+    try {
+      setSavingPassword(true);
+      const res = await fetch(`${API_BASE_URL}/api/profile/password`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          confirmPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to change password.');
+      }
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setToast({
+        type: 'success',
+        message: 'Password changed successfully!',
+      });
+    } catch (err) {
+      setToast({
+        type: 'error',
+        message: err.message || 'Failed to change password.',
+      });
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   // --------------------------------------------------
@@ -811,9 +1124,76 @@ const Dashboard = () => {
       }
     };
 
+    const handleProfileUpdated = (payload) => {
+      if (!payload?.userId) return;
+      const { userId, fullName, avatar } = payload;
+      const currentUserId = user?.id || user?._id;
+
+      if (String(userId) === String(currentUserId)) {
+        setUser((prev) => {
+          const next = {
+            ...prev,
+            fullName: fullName || prev.fullName,
+            avatar: avatar !== undefined ? avatar : prev.avatar,
+          };
+          localStorage.setItem('user:detail', JSON.stringify(next));
+          return next;
+        });
+      }
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          String(c.user?.receiverId) === String(userId)
+            ? {
+                ...c,
+                user: {
+                  ...c.user,
+                  fullName: fullName || c.user.fullName,
+                  avatar: avatar !== undefined ? avatar : c.user.avatar,
+                },
+              }
+            : c
+        )
+      );
+
+      setMessages((prev) => {
+        if (String(prev?.receiver?.receiverId) === String(userId)) {
+          return {
+            ...prev,
+            receiver: {
+              ...prev.receiver,
+              fullName: fullName || prev.receiver.fullName,
+              avatar: avatar !== undefined ? avatar : prev.receiver.avatar,
+            },
+          };
+        }
+        return prev;
+      });
+
+      setUsers((prev) =>
+        prev.map((u) =>
+          String(u.user?.receiverId) === String(userId)
+            ? {
+                ...u,
+                user: {
+                  ...u.user,
+                  fullName: fullName || u.user.fullName,
+                  avatar: avatar !== undefined ? avatar : u.user.avatar,
+                },
+              }
+            : u
+        )
+      );
+    };
+
     socket.on(
       'getMessage',
       handleIncomingMessage
+    );
+
+    socket.on(
+      'profileUpdated',
+      handleProfileUpdated
     );
 
     socket.on(
@@ -853,6 +1233,11 @@ const Dashboard = () => {
       );
 
       socket.off(
+        'profileUpdated',
+        handleProfileUpdated
+      );
+
+      socket.off(
         'messageReacted',
         handleMessageReacted
       );
@@ -886,6 +1271,7 @@ const Dashboard = () => {
     socket,
     messages?.conversationId,
     user?.id,
+    user?._id,
   ]);
 
   // --------------------------------------------------
@@ -1865,15 +2251,13 @@ const Dashboard = () => {
                 {/* User Header */}
                 <div className="mb-4 flex items-center justify-between">
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className="relative flex h-12 w-12 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-violet-200 bg-violet-100 p-1 dark:border-violet-500/30 dark:bg-violet-500/10">
-                      <img
-                        src={Avatar}
-                        alt="User avatar"
-                        className="h-full w-full rounded-full object-cover"
-                      />
-
-                      <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />
-                    </div>
+                    <Avatar
+                      src={user?.avatar}
+                      name={user?.fullName || 'My Profile'}
+                      size="lg"
+                      onlineIndicator={true}
+                      isOnline={true}
+                    />
 
                     <div className="min-w-0">
                       <h3 className="truncate text-base font-semibold text-slate-800 dark:text-slate-100">
@@ -2042,24 +2426,13 @@ const Dashboard = () => {
                                 : 'border-transparent bg-white hover:border-slate-200 hover:bg-slate-50 dark:bg-slate-800/80 dark:hover:bg-slate-800'
                             }`}
                           >
-                            <div className="relative flex-shrink-0">
-                              <img
-                                src={img1}
-                                alt={
-                                  conversationUser?.fullName ||
-                                  'Contact'
-                                }
-                                className="h-11 w-11 rounded-full border border-violet-200 object-cover dark:border-violet-500/20"
-                              />
-
-                              <span
-                                className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-slate-800 ${
-                                  isOnline
-                                    ? 'bg-emerald-500'
-                                    : 'bg-slate-300 dark:bg-slate-600'
-                                }`}
-                              />
-                            </div>
+                            <Avatar
+                              src={conversationUser?.avatar}
+                              name={conversationUser?.fullName || 'Contact'}
+                              size="lg"
+                              onlineIndicator={true}
+                              isOnline={isOnline}
+                            />
 
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-1">
@@ -2197,28 +2570,13 @@ const Dashboard = () => {
                   {messages?.receiver
                     ?.fullName ? (
                     <>
-                      <div className="relative flex-shrink-0">
-                        <img
-                          src={img1}
-                          alt={
-                            messages.receiver
-                              .fullName
-                          }
-                          className="h-11 w-11 rounded-full border border-violet-200 object-cover dark:border-violet-500/20"
-                        />
-
-                        <span
-                          className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 ${
-                            isUserOnline(
-                              messages
-                                .receiver
-                                .receiverId
-                            )
-                              ? 'bg-emerald-500'
-                              : 'bg-slate-300 dark:bg-slate-600'
-                          }`}
-                        />
-                      </div>
+                      <Avatar
+                        src={messages.receiver?.avatar}
+                        name={messages.receiver?.fullName || 'User'}
+                        size="lg"
+                        onlineIndicator={true}
+                        isOnline={isUserOnline(messages.receiver?.receiverId)}
+                      />
 
                       <div className="min-w-0">
                         <h3 className="truncate text-base font-semibold text-slate-800 dark:text-slate-100">
@@ -3169,24 +3527,13 @@ const Dashboard = () => {
                             }
                             className="flex w-full items-center gap-3 rounded-2xl border border-transparent bg-white p-3 text-left transition hover:border-violet-200 hover:bg-violet-50 dark:bg-slate-800/80 dark:hover:border-violet-500/20 dark:hover:bg-violet-500/5"
                           >
-                            <div className="relative flex-shrink-0">
-                              <img
-                                src={img1}
-                                alt={
-                                  person?.fullName ||
-                                  'User'
-                                }
-                                className="h-11 w-11 rounded-full border border-violet-200 object-cover dark:border-violet-500/20"
-                              />
-
-                              <span
-                                className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-slate-800 ${
-                                  isOnline
-                                    ? 'bg-emerald-500'
-                                    : 'bg-slate-300 dark:bg-slate-600'
-                                }`}
-                              />
-                            </div>
+                            <Avatar
+                              src={person?.avatar}
+                              name={person?.fullName || 'User'}
+                              size="lg"
+                              onlineIndicator={true}
+                              isOnline={isOnline}
+                            />
 
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
@@ -3277,23 +3624,26 @@ const Dashboard = () => {
       )}
 
       {/* ==================================================
-          SETTINGS MODAL (NOTIFICATIONS & SOUND)
+          SETTINGS & PROFILE MODAL
       ================================================== */}
 
       {showSettingsModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm transition-all animate-fade-in"
-          onClick={() => setShowSettingsModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4 backdrop-blur-sm transition-all animate-fade-in"
+          onClick={() => {
+            setShowSettingsModal(false);
+            handleCancelAvatarPreview();
+          }}
         >
           <div
-            className="relative w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-2xl backdrop-blur-xl transition-all dark:border-slate-800 dark:bg-slate-900/95"
+            className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl backdrop-blur-xl transition-all dark:border-slate-800 dark:bg-slate-900"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-labelledby="settings-modal-title"
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
                   <Settings className="h-5 w-5" aria-hidden="true" />
@@ -3306,14 +3656,17 @@ const Dashboard = () => {
                     Notification Settings
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Manage alerts and sound preferences
+                    Manage profile, notifications, and account security
                   </p>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => setShowSettingsModal(false)}
+                onClick={() => {
+                  setShowSettingsModal(false);
+                  handleCancelAvatarPreview();
+                }}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                 aria-label="Close settings"
                 title="Close settings"
@@ -3322,148 +3675,470 @@ const Dashboard = () => {
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="mt-5 space-y-4">
-              {/* Desktop Notifications Item */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition dark:border-slate-800/80 dark:bg-slate-800/40">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
-                      {notificationsEnabled ? (
-                        <Bell className="h-4 w-4" aria-hidden="true" />
-                      ) : (
-                        <BellOff className="h-4 w-4" aria-hidden="true" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                          Desktop notifications
-                        </h3>
-                        {notificationPermission === 'denied' ? (
-                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300">
-                            Blocked
-                          </span>
-                        ) : notificationsEnabled ? (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                            ON
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                            OFF
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        Notifications are shown when you're away from a conversation.
-                      </p>
-                      {notificationPermission === 'denied' && (
-                        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                          Permission is blocked by your browser. Please allow notifications in site settings.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
+            {/* Navigation Tabs */}
+            <div className="flex flex-shrink-0 border-b border-slate-100 px-5 pt-2 dark:border-slate-800 overflow-x-auto scrollbar-none">
+              <div className="flex space-x-1 sm:space-x-2">
+                {[
+                  { id: 'profile', label: 'Profile', icon: User },
+                  { id: 'notifications', label: 'Notifications', icon: Bell },
+                  { id: 'appearance', label: 'Appearance', icon: Palette },
+                  { id: 'security', label: 'Security', icon: Shield },
+                  { id: 'account', label: 'Account', icon: CheckCircle2 },
+                ].map(({ id, label, icon: Icon }) => (
                   <button
+                    key={id}
                     type="button"
-                    onClick={handleToggleNotifications}
-                    aria-label={
-                      notificationsEnabled
-                        ? 'Disable desktop notifications'
-                        : 'Enable desktop notifications'
-                    }
-                    title={
-                      notificationsEnabled
-                        ? 'Disable desktop notifications'
-                        : 'Enable desktop notifications'
-                    }
-                    className={`flex-shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-semibold shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
-                      notificationsEnabled
-                        ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
-                        : 'bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500'
+                    onClick={() => setSettingsTab(id)}
+                    aria-label={`${label} settings tab`}
+                    className={`flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-semibold transition ${
+                      settingsTab === id
+                        ? 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400'
+                        : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                     }`}
                   >
-                    {notificationsEnabled ? 'Disable' : 'Enable'}
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{label}</span>
                   </button>
-                </div>
-              </div>
-
-              {/* Message Sound Item */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition dark:border-slate-800/80 dark:bg-slate-800/40">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
-                      {soundEnabled ? (
-                        <Volume2 className="h-4 w-4" aria-hidden="true" />
-                      ) : (
-                        <VolumeX className="h-4 w-4" aria-hidden="true" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                          Message sound
-                        </h3>
-                        {soundEnabled ? (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                            ON
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                            OFF
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        Play a sound for new messages.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleTestSound}
-                      aria-label="Test message sound"
-                      title="Test message sound"
-                      className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-xs transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                    >
-                      Test
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleToggleSound}
-                      aria-label={
-                        soundEnabled
-                          ? 'Disable message sound'
-                          : 'Enable message sound'
-                      }
-                      title={
-                        soundEnabled
-                          ? 'Disable message sound'
-                          : 'Enable message sound'
-                      }
-                      className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
-                        soundEnabled
-                          ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
-                          : 'bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500'
-                      }`}
-                    >
-                      {soundEnabled ? 'Off' : 'On'}
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
 
+            {/* Modal Body / Tab Content */}
+            <div className="flex-1 overflow-y-auto p-5 sidebar-scrollable">
+              {/* TAB 1: PROFILE */}
+              {settingsTab === 'profile' && (
+                <div className="space-y-6">
+                  {/* Avatar Section */}
+                  <div className="flex flex-col items-center sm:flex-row sm:items-start gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800/80 dark:bg-slate-800/40">
+                    <div className="relative flex-shrink-0">
+                      <Avatar
+                        src={avatarPreview || user?.avatar}
+                        name={user?.fullName || 'My Profile'}
+                        size="2xl"
+                      />
+                    </div>
+
+                    <div className="flex-1 text-center sm:text-left min-w-0">
+                      <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        Profile Photo
+                      </h4>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        Upload a JPG, PNG, WebP, or GIF (max. 5 MB).
+                      </p>
+
+                      <input
+                        ref={avatarInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={handleAvatarSelect}
+                        className="hidden"
+                      />
+
+                      {avatarPreview ? (
+                        <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                          <button
+                            type="button"
+                            onClick={handleUploadAvatar}
+                            disabled={uploadingAvatar}
+                            aria-label="Upload photo"
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-violet-700 disabled:opacity-50"
+                          >
+                            {uploadingAvatar ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Upload className="h-3.5 w-3.5" />
+                            )}
+                            <span>{uploadingAvatar ? 'Uploading…' : 'Upload Photo'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleCancelAvatarPreview}
+                            disabled={uploadingAvatar}
+                            aria-label="Cancel avatar selection"
+                            className="rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-600 shadow-xs transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => avatarInputRef.current?.click()}
+                            aria-label="Change photo"
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-xs transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            <Camera className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+                            <span>Change Photo</span>
+                          </button>
+
+                          {user?.avatar?.url && (
+                            <button
+                              type="button"
+                              onClick={handleRemoveAvatar}
+                              disabled={removingAvatar}
+                              aria-label="Remove photo"
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50/50 px-3.5 py-1.5 text-xs font-semibold text-red-600 shadow-xs transition hover:bg-red-100 dark:border-red-500/30 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60"
+                            >
+                              {removingAvatar ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                              <span>{removingAvatar ? 'Removing…' : 'Remove'}</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Display Name Section */}
+                  <form onSubmit={handleSaveDisplayName} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800/80 dark:bg-slate-800/40">
+                    <label
+                      htmlFor="settings-display-name"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300"
+                    >
+                      Display Name
+                    </label>
+
+                    <div className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <input
+                        id="settings-display-name"
+                        type="text"
+                        name="displayName"
+                        value={displayNameInput}
+                        onChange={(e) => setDisplayNameInput(e.target.value)}
+                        placeholder="Display name"
+                        maxLength={50}
+                        className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-800 shadow-xs outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-violet-400"
+                      />
+
+                      <button
+                        type="submit"
+                        disabled={savingProfile || !displayNameInput.trim()}
+                        aria-label="Save profile changes"
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-violet-700 disabled:opacity-50"
+                      >
+                        {savingProfile ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5" />
+                        )}
+                        <span>{savingProfile ? 'Saving…' : 'Save Changes'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* TAB 2: NOTIFICATIONS */}
+              {settingsTab === 'notifications' && (
+                <div className="space-y-4">
+                  {/* Desktop Notifications Item */}
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition dark:border-slate-800/80 dark:bg-slate-800/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex gap-3">
+                        <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
+                          {notificationsEnabled ? (
+                            <Bell className="h-4 w-4" aria-hidden="true" />
+                          ) : (
+                            <BellOff className="h-4 w-4" aria-hidden="true" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                              Desktop notifications
+                            </h3>
+                            {notificationPermission === 'denied' ? (
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300">
+                                Blocked
+                              </span>
+                            ) : notificationsEnabled ? (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                                ON
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                                OFF
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            Notifications are shown when you're away from a conversation.
+                          </p>
+                          {notificationPermission === 'denied' && (
+                            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                              Permission is blocked by your browser. Please allow notifications in site settings.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleToggleNotifications}
+                        aria-label={
+                          notificationsEnabled
+                            ? 'Disable desktop notifications'
+                            : 'Enable desktop notifications'
+                        }
+                        title={
+                          notificationsEnabled
+                            ? 'Disable desktop notifications'
+                            : 'Enable desktop notifications'
+                        }
+                        className={`flex-shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-semibold shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                          notificationsEnabled
+                            ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+                            : 'bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500'
+                        }`}
+                      >
+                        {notificationsEnabled ? 'Disable' : 'Enable'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Message Sound Item */}
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition dark:border-slate-800/80 dark:bg-slate-800/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex gap-3">
+                        <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600 dark:bg-violet-950/60 dark:text-violet-400">
+                          {soundEnabled ? (
+                            <Volume2 className="h-4 w-4" aria-hidden="true" />
+                          ) : (
+                            <VolumeX className="h-4 w-4" aria-hidden="true" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                              Message sound
+                            </h3>
+                            {soundEnabled ? (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                                ON
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                                OFF
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            Play a sound for new messages.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleTestSound}
+                          aria-label="Test message sound"
+                          title="Test message sound"
+                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-xs transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          Test
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleToggleSound}
+                          aria-label={
+                            soundEnabled
+                              ? 'Disable message sound'
+                              : 'Enable message sound'
+                          }
+                          title={
+                            soundEnabled
+                              ? 'Disable message sound'
+                              : 'Enable message sound'
+                          }
+                          className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                            soundEnabled
+                              ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+                              : 'bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500'
+                          }`}
+                        >
+                          {soundEnabled ? 'Off' : 'On'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: APPEARANCE */}
+              {settingsTab === 'appearance' && (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800/80 dark:bg-slate-800/40">
+                    <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      Theme Mode
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Choose between light and dark themes for ChatterFlow.
+                    </p>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDarkMode(false);
+                          localStorage.setItem('chatterflow-theme', 'light');
+                          document.documentElement.classList.remove('dark');
+                        }}
+                        aria-label="Select light theme"
+                        className={`flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition ${
+                          !darkMode
+                            ? 'border-violet-500 bg-white ring-2 ring-violet-500/20 dark:bg-slate-800'
+                            : 'border-slate-200 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-800/60'
+                        }`}
+                      >
+                        <Sun className="h-6 w-6 text-amber-500" />
+                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">Light Mode</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDarkMode(true);
+                          localStorage.setItem('chatterflow-theme', 'dark');
+                          document.documentElement.classList.add('dark');
+                        }}
+                        aria-label="Select dark theme"
+                        className={`flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition ${
+                          darkMode
+                            ? 'border-violet-500 bg-white ring-2 ring-violet-500/20 dark:bg-slate-800'
+                            : 'border-slate-200 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-800/60'
+                        }`}
+                      >
+                        <Moon className="h-6 w-6 text-violet-400" />
+                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">Dark Mode</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: SECURITY */}
+              {settingsTab === 'security' && (
+                <form onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800/80 dark:bg-slate-800/40">
+                  <div className="flex items-center gap-2 border-b border-slate-200/60 pb-3 dark:border-slate-700/60">
+                    <Lock className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                    <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      Change Password
+                    </h3>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Current Password
+                    </label>
+                    <input
+                      type="password"
+                      name="currentPassword"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Enter current password"
+                      required
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-800 shadow-xs outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                      New Password
+                    </label>
+                    <input
+                      type="password"
+                      name="newPassword"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Enter new password (min. 6 characters)"
+                      minLength={6}
+                      required
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-800 shadow-xs outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type="password"
+                      name="confirmPassword"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm new password"
+                      minLength={6}
+                      required
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-800 shadow-xs outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={savingPassword}
+                      aria-label="Change password"
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-semibold text-white shadow-xs transition hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      {savingPassword ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <KeyRound className="h-3.5 w-3.5" />
+                      )}
+                      <span>{savingPassword ? 'Changing Password…' : 'Change Password'}</span>
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 5: ACCOUNT */}
+              {settingsTab === 'account' && (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800/80 dark:bg-slate-800/40">
+                    <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      Account Details
+                    </h3>
+
+                    <div className="mt-4 space-y-3 text-xs">
+                      <div className="flex items-center justify-between py-2 border-b border-slate-200/60 dark:border-slate-700/60">
+                        <span className="text-slate-500 dark:text-slate-400">Email address</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">{user?.email || 'N/A'}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-2 border-b border-slate-200/60 dark:border-slate-700/60">
+                        <span className="text-slate-500 dark:text-slate-400">Verification status</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                          <CheckCircle2 className="h-3 w-3" /> Verified
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-2">
+                        <span className="text-slate-500 dark:text-slate-400">Account ID</span>
+                        <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{user?.id || user?._id || 'N/A'}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Modal Footer */}
-            <div className="mt-6 flex justify-end">
+            <div className="flex flex-shrink-0 justify-end border-t border-slate-100 p-4 dark:border-slate-800">
               <button
                 type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                onClick={() => {
+                  setShowSettingsModal(false);
+                  handleCancelAvatarPreview();
+                }}
+                aria-label="Close settings modal"
+                className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
               >
                 Done
               </button>

@@ -1,6 +1,5 @@
-require('dotenv').config();
-
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
@@ -10,7 +9,7 @@ const cors = require('cors');
 const http = require('http');
 const mongoose = require('mongoose');
 const { sendOtpEmail } = require('./services/emailService');
-const { processAttachmentUpload, MAX_FILE_SIZE } = require('./services/uploadService');
+const { processAttachmentUpload, processAvatarUpload, deleteCloudinaryAsset, MAX_FILE_SIZE, MAX_AVATAR_SIZE } = require('./services/uploadService');
 const { extractBearerToken, getJwtSecret, requireAuth, verifyJwt } = require('./middleware/auth');
 const { findConversationByMembers, getOrCreateDirectConversation, getOtherMemberId, isConversationMember, toIdString } = require('./utils/chat');
 
@@ -41,7 +40,7 @@ const onlineSocketsByUser = new Map();
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 const createJwtToken = (user) => jwt.sign({ userId: user._id, email: user.email }, getJwtSecret(), { expiresIn: 84600 });
 const createResetAuthorizationToken = (user) => jwt.sign({ userId: user._id, email: user.email, purpose: 'forgot-password-reset' }, getJwtSecret(), { expiresIn: 600 });
-const standardUserResponse = (user) => ({ id: user._id, email: user.email, fullName: user.fullName });
+const standardUserResponse = (user) => ({ id: user._id, _id: user._id, email: user.email, fullName: user.fullName, avatar: user.avatar || null });
 const isOnline = (userId) => (onlineSocketsByUser.get(toIdString(userId))?.size || 0) > 0;
 const addOnlineSocket = (userId, socketId) => {
   const id = toIdString(userId); const sockets = onlineSocketsByUser.get(id) || new Set();
@@ -68,7 +67,7 @@ const findUserByNormalizedEmail = (email) => {
 };
 const getVerifiedRecipient = async (receiverId, senderId) => {
   if (!receiverId || toIdString(receiverId) === toIdString(senderId)) return null;
-  return Users.findOne({ _id: receiverId, emailVerified: true }).select('_id email fullName lastSeen updatedAt');
+  return Users.findOne({ _id: receiverId, emailVerified: true }).select('_id email fullName avatar lastSeen updatedAt');
 };
 const requireConversationMember = async (conversationId, userId) => {
   if (!conversationId || conversationId === 'new') return null;
@@ -79,9 +78,13 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
 });
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_AVATAR_SIZE },
+});
 
 const buildMessageResponse = async (message) => {
-  const sender = await Users.findById(message.senderId).select('_id email fullName');
+  const sender = await Users.findById(message.senderId).select('_id email fullName avatar');
   return {
     _id: message._id,
     id: message._id,
@@ -99,6 +102,7 @@ const buildMessageResponse = async (message) => {
       id: sender?._id || message.senderId,
       email: sender?.email || '',
       fullName: sender?.fullName || 'User',
+      avatar: sender?.avatar || null,
     },
   };
 };
@@ -284,6 +288,197 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
+// ==========================================
+// USER PROFILE & ACCOUNT SETTINGS ENDPOINTS
+// ==========================================
+
+app.get('/api/profile', requireAuth, async (req, res) => {
+  try {
+    const user = await Users.findById(req.auth.userId).select('_id email fullName avatar emailVerified createdAt updatedAt');
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    return res.status(200).json({
+      _id: user._id,
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      avatar: user.avatar || null,
+      emailVerified: Boolean(user.emailVerified),
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    });
+  } catch (error) {
+    console.error('Profile fetch error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/profile', requireAuth, async (req, res) => {
+  try {
+    const { fullName } = req.body || {};
+    const trimmed = String(fullName || '').trim();
+
+    if (!trimmed || trimmed.length < 2 || trimmed.length > 50) {
+      return res.status(400).json({ error: 'Full name must be between 2 and 50 characters.' });
+    }
+
+    const user = await Users.findById(req.auth.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    user.fullName = trimmed;
+    await user.save();
+
+    io.emit('profileUpdated', {
+      userId: user._id,
+      fullName: user.fullName,
+      avatar: user.avatar || null,
+    });
+
+    return res.status(200).json({
+      message: 'Profile updated successfully',
+      user: {
+        _id: user._id,
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        avatar: user.avatar || null,
+        emailVerified: Boolean(user.emailVerified),
+      },
+    });
+  } catch (error) {
+    console.error('Profile update error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/profile/avatar', requireAuth, (req, res, next) => {
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'Image must be 5 MB or smaller.' });
+      }
+      return res.status(400).json({ error: err.message || 'Avatar upload error.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'No avatar image file uploaded.' });
+    }
+
+    const user = await Users.findById(req.auth.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const oldPublicId = user.avatar?.publicId;
+
+    const result = await processAvatarUpload({
+      buffer: file.buffer,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      size: file.size,
+      userId: req.auth.userId,
+    });
+
+    user.avatar = {
+      url: result.url,
+      publicId: result.publicId,
+    };
+    await user.save();
+
+    if (oldPublicId && oldPublicId !== result.publicId) {
+      deleteCloudinaryAsset(oldPublicId).catch(() => {});
+    }
+
+    io.emit('profileUpdated', {
+      userId: user._id,
+      fullName: user.fullName,
+      avatar: user.avatar,
+    });
+
+    return res.status(200).json({
+      message: 'Avatar updated successfully',
+      avatar: user.avatar,
+    });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    const statusCode = error.statusCode || (error.code === 'LIMIT_FILE_SIZE' ? 400 : 500);
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'Image must be 5 MB or smaller.'
+      : (error.message || 'Avatar upload failed.');
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
+app.delete('/api/profile/avatar', requireAuth, async (req, res) => {
+  try {
+    const user = await Users.findById(req.auth.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    if (user.avatar?.publicId) {
+      deleteCloudinaryAsset(user.avatar.publicId).catch(() => {});
+    }
+
+    user.avatar = { url: null, publicId: null };
+    await user.save();
+
+    io.emit('profileUpdated', {
+      userId: user._id,
+      fullName: user.fullName,
+      avatar: null,
+    });
+
+    return res.status(200).json({
+      message: 'Avatar removed successfully',
+      avatar: null,
+    });
+  } catch (error) {
+    console.error('Avatar removal error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/profile/password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'All fields are required.' });
+    }
+
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'New password and confirmation do not match.' });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'New password must be different from current password.' });
+    }
+
+    const user = await Users.findById(req.auth.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const isMatch = await bcryptjs.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    user.password = await bcryptjs.hash(newPassword, 10);
+    user.passwordResetAt = new Date();
+    user.token = null;
+    await user.save();
+
+    return res.status(200).json({ message: 'Password changed successfully.' });
+  } catch (error) {
+    console.error('Password change error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 const formatLastMessageText = (msg) => {
   if (!msg) return '';
   if (msg.isDeleted) return 'This message was deleted';
@@ -358,10 +553,10 @@ app.get('/api/conversations/:userId', requireAuth, async (req, res) => {
     if (toIdString(req.params.userId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized.' });
     const conversations = await Conversations.find({ members: req.auth.userId }).sort({ updatedAt: -1 });
     const data = await Promise.all(conversations.map(async (conversation) => {
-      const receiverId = getOtherMemberId(conversation, req.auth.userId); const receiver = await Users.findById(receiverId).select('_id email fullName lastSeen updatedAt');
+      const receiverId = getOtherMemberId(conversation, req.auth.userId); const receiver = await Users.findById(receiverId).select('_id email fullName avatar lastSeen updatedAt');
       const lastMessage = await Messages.findOne({ conversationId: toIdString(conversation._id) }).sort({ createdAt: -1 });
       const unreadCount = await Messages.countDocuments({ conversationId: toIdString(conversation._id), senderId: receiverId, status: { $ne: 'read' }, isDeleted: { $ne: true } });
-      return { user: { receiverId: receiver?._id || receiverId, email: receiver?.email || '', fullName: receiver?.fullName || 'User', lastSeen: receiver?.lastSeen || receiver?.updatedAt || null }, conversationId: conversation._id,
+      return { user: { receiverId: receiver?._id || receiverId, email: receiver?.email || '', fullName: receiver?.fullName || 'User', avatar: receiver?.avatar || null, lastSeen: receiver?.lastSeen || receiver?.updatedAt || null }, conversationId: conversation._id,
         lastMessage: lastMessage ? { message: formatLastMessageText(lastMessage), createdAt: lastMessage.createdAt, senderId: lastMessage.senderId, status: lastMessage.status } : null, unreadCount };
     })); return res.status(200).json(data);
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
@@ -479,7 +674,7 @@ app.post('/api/message/read', requireAuth, async (req, res) => {
   catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
 app.get('/api/users/:userId', requireAuth, async (req, res) => {
-  try { if (toIdString(req.params.userId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized.' }); const users = await Users.find({ _id: { $ne: req.auth.userId }, emailVerified: true }).select('_id email fullName lastSeen updatedAt'); return res.status(200).json(users.map((user) => ({ user: { email: user.email, fullName: user.fullName, receiverId: user._id, lastSeen: user.lastSeen || user.updatedAt || null } }))); }
+  try { if (toIdString(req.params.userId) !== req.auth.userId) return res.status(403).json({ error: 'Unauthorized.' }); const users = await Users.find({ _id: { $ne: req.auth.userId }, emailVerified: true }).select('_id email fullName avatar lastSeen updatedAt'); return res.status(200).json(users.map((user) => ({ user: { email: user.email, fullName: user.fullName, receiverId: user._id, avatar: user.avatar || null, lastSeen: user.lastSeen || user.updatedAt || null } }))); }
   catch (error) { console.error(error); return res.status(500).json({ error: 'Server error' }); }
 });
 
