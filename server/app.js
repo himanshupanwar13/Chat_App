@@ -17,6 +17,9 @@ const { findConversationByMembers, getOrCreateDirectConversation, getOtherMember
 
 getJwtSecret();
 const app = express();
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 const server = http.createServer(app);
 const port = process.env.PORT || 8000;
 
